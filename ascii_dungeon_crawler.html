@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canvas Dungeon Crawler</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        #gameCanvas {
+            display: block;
+            margin: 10em auto;
+            background-color: #000;
+        }
+
+        #fadeOverlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: black;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 1000;
+            transition: opacity 0.5s ease-in-out;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div id="fadeOverlay"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        class DungeonCrawler {
+            constructor() {
+                // ===== BASIC SETUP =====
+                this.canvas = document.getElementById('gameCanvas');
+                this.setupRenderer();
+                this.setupPostProcessing();
+                this.setupLighting();
+                
+                // ===== GAME STATE =====
+                this.playerPosition = { x: 1.5, y: 0.8, z: 1.5 };
+                this.playerRotation = { x: 0, y: 0 };
+                this.keys = {};
+                this.mouseMovement = { x: 0, y: 0 };
+                this.currentLevel = 1;
+                this.lightOn = true;
+                this.pixellationOn = false;
+                this.currentFloorIndex = 0;
+                this.fadeOverlay = document.getElementById('fadeOverlay');
+                this.isTransitioning = false;
+                
+                // ===== WATER DROPLETS =====
+                this.waterDroplets = [];
+                this.lastDropletTime = 0;
+                
+                // ===== DUST PARTICLES =====
+                this.dustParticles = [];
+                this.lastDustTime = 0;
+                
+                // ===== GENERATE WORLD =====
+                this.initializeFloors();
+                this.build3DWorld();
+                
+                // ===== START GAME =====
+                this.setupControls();
+                this.gameLoop();
+            }
+
+            // ===== RENDERER SETUP =====
+            setupRenderer() {
+                this.scene = new THREE.Scene();
+                this.camera = new THREE.PerspectiveCamera(75, 800 / 600, 0.1, 1000);
+                this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
+                this.renderer.setSize(800, 600);
+                this.renderer.setClearColor(0x1a1a2e);
+                this.renderer.shadowMap.enabled = true;
+                this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                
+                this.sceneObjects = new THREE.Group();
+                this.scene.add(this.sceneObjects);
+            }
+
+            setupPostProcessing() {
+                this.renderTarget = new THREE.WebGLRenderTarget(800, 600, { 
+                    minFilter: THREE.NearestFilter,
+                    magFilter: THREE.NearestFilter,
+                    format: THREE.RGBAFormat
+                });
+                
+                const pixelShader = {
+                    uniforms: {
+                        tDiffuse: { value: null },
+                        resolution: { value: new THREE.Vector2(800, 600) },
+                        pixelSize: { value: 4.0 }
+                    },
+                    vertexShader: `
+                        varying vec2 vUv;
+                        void main() {
+                            vUv = uv;
+                            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                        }
+                    `,
+                    fragmentShader: `
+                        uniform sampler2D tDiffuse;
+                        uniform vec2 resolution;
+                        uniform float pixelSize;
+                        varying vec2 vUv;
+                        
+                        void main() {
+                            vec2 dxy = pixelSize / resolution;
+                            vec2 coord = dxy * floor(vUv / dxy);
+                            gl_FragColor = texture2D(tDiffuse, coord);
+                        }
+                    `
+                };
+                
+                this.pixelMaterial = new THREE.ShaderMaterial(pixelShader);
+                this.postProcessQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.pixelMaterial);
+                this.postProcessScene = new THREE.Scene();
+                this.postProcessScene.add(this.postProcessQuad);
+                this.postProcessCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+            }
+
+            setupLighting() {
+                // Dim ambient light
+                const ambientLight = new THREE.AmbientLight(0x101010, 0.05);
+                this.scene.add(ambientLight);
+                
+                // Player lantern
+                this.playerLight = new THREE.PointLight(0xffffff, 35, 3, 2);
+                this.playerLight.position.set(0, 0.6, 0);
+                this.playerLight.castShadow = true;
+                this.playerLight.shadow.mapSize.width = 2048;
+                this.playerLight.shadow.mapSize.height = 2048;
+                this.playerLight.shadow.camera.near = 0.1;
+                this.playerLight.shadow.camera.far = 3;
+                this.scene.add(this.playerLight);
+            }
+
+            // ===== FLOORS INITIALIZATION =====
+            initializeFloors() {
+                // Sample multi-floor layout - replace with your level editor output
+                this.floors = [
+    // Floor 1
+    [
+        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 0, 1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        [1, 0, 1, 0, 1, 0, 1, 1, 1, 1],
+        [1, 0, 1, 0, 1, 0, 1, 1, 1, 1],
+        [1, 1, 1, 0, 1, 0, 1, 1, 1, 1],
+        [1, 0, 0, 0, 0, 0, 0, 1, 1, 1],
+        [1, 1, 1, 1, 0, 0, 0, 1, 7, 1],
+        [1, 1, 1, 1, 0, 0, 0, 0, 0, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    ],
+    // Floor 2
+    [
+        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    ]
+];
+
+                
+                // Set current map to the starting floor
+                this.map = this.floors[this.currentFloorIndex];
+                this.placeGameObjects();
+
+                // dump current floor
+                console.log('Current floor:', this.currentFloorIndex);
+                console.log(this.map);
+            }
+
+            // ===== OBJECT PLACEMENT =====
+            placeGameObjects() {
+                const emptyCells = [];
+                for (let y = 1; y < 9; y++) {
+                    for (let x = 1; x < 9; x++) {
+                        if (this.map[y][x] === 0 && !(x === 1 && y === 1)) {
+                            emptyCells.push({x, y});
+                        }
+                    }
+                }
+                
+                // if (emptyCells.length > 0) {
+                //     // Place treasure
+                //     const treasureCell = emptyCells[Math.floor(Math.random() * emptyCells.length)];
+                //     this.map[treasureCell.y][treasureCell.x] = 2;
+                    
+                //     let remainingCells = emptyCells.filter(cell => 
+                //         !(cell.x === treasureCell.x && cell.y === treasureCell.y)
+                //     );
+                    
+                //     // Place spider
+                //     const spiderCells = remainingCells.filter(cell => 
+                //         Math.abs(cell.x - treasureCell.x) + Math.abs(cell.y - treasureCell.y) > 2 &&
+                //         Math.abs(cell.x - 1) + Math.abs(cell.y - 1) > 2
+                //     );
+                    
+                //     if (spiderCells.length > 0) {
+                //         const spiderCell = spiderCells[Math.floor(Math.random() * spiderCells.length)];
+                //         this.map[spiderCell.y][spiderCell.x] = 4;
+                        
+                //         remainingCells = remainingCells.filter(cell => 
+                //             !(cell.x === spiderCell.x && cell.y === spiderCell.y)
+                //         );
+                        
+                //         // Place 1-2 humanoid enemies
+                //         const numEnemies = Math.floor(Math.random() * 2) + 1;
+                //         for (let i = 0; i < numEnemies && remainingCells.length > 0; i++) {
+                //             const enemyCells = remainingCells.filter(cell => 
+                //                 Math.abs(cell.x - treasureCell.x) + Math.abs(cell.y - treasureCell.y) > 2 &&
+                //                 Math.abs(cell.x - spiderCell.x) + Math.abs(cell.y - spiderCell.y) > 2 &&
+                //                 Math.abs(cell.x - 1) + Math.abs(cell.y - 1) > 2
+                //             );
+                            
+                //             if (enemyCells.length > 0) {
+                //                 const enemyCell = enemyCells[Math.floor(Math.random() * enemyCells.length)];
+                //                 this.map[enemyCell.y][enemyCell.x] = 5;
+                //                 remainingCells = remainingCells.filter(cell => 
+                //                     !(cell.x === enemyCell.x && cell.y === enemyCell.y)
+                //                 );
+                //             }
+                //         }
+                        
+                //         // Place exit
+                //         const exitCells = remainingCells.filter(cell => 
+                //             Math.abs(cell.x - treasureCell.x) + Math.abs(cell.y - treasureCell.y) > 3 &&
+                //             Math.abs(cell.x - spiderCell.x) + Math.abs(cell.y - spiderCell.y) > 2
+                //         );
+                        
+                //         if (exitCells.length > 0) {
+                //             const exitCell = exitCells[Math.floor(Math.random() * exitCells.length)];
+                //             this.map[exitCell.y][exitCell.x] = 3;
+                //         }
+                //     }
+                // }
+                
+                // Reset game state
+                this.treasureFound = false;
+                this.spiderKilled = false;
+                this.enemiesKilled = new Set();
+            }
+
+            // ===== 3D WORLD BUILDING =====
+            build3DWorld() {
+                this.sceneObjects.clear();
+                
+                // Load textures
+                const textureLoader = new THREE.TextureLoader();
+                const wallTexture = textureLoader.load('wall.png');
+                const floorTexture = textureLoader.load('floor.png');
+                const floor2Texture = textureLoader.load('floor2.png');
+                const ceilingTexture = textureLoader.load('ceiling.png');
+                const clothTexture = textureLoader.load('cloth.png');
+                const cloth2Texture = textureLoader.load('cloth2.png');
+                const rotTexture = textureLoader.load('rot.png');
+                const rot2Texture = textureLoader.load('rot2.png');
+                const chairTexture = textureLoader.load('chair.png');
+                
+                [wallTexture, floorTexture, floor2Texture, ceilingTexture, clothTexture, cloth2Texture, rotTexture, rot2Texture, chairTexture].forEach(texture => {
+                    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+                    texture.repeat.set(1, 1);
+                    texture.magFilter = texture.minFilter = THREE.NearestFilter;
+                });
+                
+                // Materials
+                const wallMaterial = new THREE.MeshLambertMaterial({ map: wallTexture });
+                const floorMaterial = new THREE.MeshLambertMaterial({ map: floorTexture });
+                const floor2Material = new THREE.MeshLambertMaterial({ map: floor2Texture });
+                const ceilingMaterial = new THREE.MeshLambertMaterial({ map: ceilingTexture });
+                
+                // Build geometry
+                for (let z = 0; z < this.map.length; z++) {
+                    for (let x = 0; x < this.map[z].length; x++) {
+                        const cell = this.map[z][x];
+                        
+                        // Floor
+                        const randomFloorMaterial = Math.random() < 0.95 ? floorMaterial : floor2Material;
+                        const floor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), randomFloorMaterial);
+                        floor.rotation.x = -Math.PI / 2;
+                        floor.position.set(x + 0.5, 0, z + 0.5);
+                        floor.receiveShadow = true;
+                        this.sceneObjects.add(floor);
+                        
+                        // Ceiling
+                        const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), ceilingMaterial);
+                        ceiling.rotation.x = Math.PI / 2;
+                        ceiling.position.set(x + 0.5, 2, z + 0.5);
+                        this.sceneObjects.add(ceiling);
+                        
+                        // Randomly place hanging cloths in empty spaces
+                        if (cell === 0 && Math.random() < 0.8) {
+                            const randomClothTexture = Math.random() < 0.5 ? clothTexture : cloth2Texture;
+                            this.createHangingCloth(x + 0.5, z + 0.5, randomClothTexture);
+                        }
+                        
+                        // Randomly place rot decals on floor in abundance
+                        if (cell === 0 && Math.random() < 0.7) {
+                            this.createRotDecal(x + 0.5, z + 0.5, rotTexture);
+                        }
+                        
+                        
+                        // Walls and objects
+                        if (cell === 1) {
+                            const wall = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 1), wallMaterial);
+                            wall.position.set(x + 0.5, 1, z + 0.5);
+                            wall.castShadow = wall.receiveShadow = true;
+                            this.sceneObjects.add(wall);
+                        } else if (cell === 2) {
+                            this.createTreasure(x + 0.5, z + 0.5);
+                        } else if (cell === 3) {
+                            this.createExit(x + 0.5, z + 0.5);
+                        } else if (cell === 4 && !this.spiderKilled) {
+                            this.createSpider(x + 0.5, z + 0.5);
+                        } else if (cell === 5) {
+                            const enemyKey = `${x},${z}`;
+                            if (!this.enemiesKilled.has(enemyKey)) {
+                                this.createEnemy(x + 0.5, z + 0.5);
+                            }
+                        } else if (cell === 6) {
+                            this.createStairsUp(x + 0.5, z + 0.5);
+                        } else if (cell === 7) {
+                            this.createStairsDown(x + 0.5, z + 0.5);
+                        }
+                    }
+                }
+                
+                // Place at most two chairs randomly
+                const emptyCells = [];
+                for (let z = 0; z < this.map.length; z++) {
+                    for (let x = 0; x < this.map[z].length; x++) {
+                        if (this.map[z][x] === 0) {
+                            emptyCells.push({x: x + 0.5, z: z + 0.5});
+                        }
+                    }
+                }
+                
+                if (emptyCells.length > 0) {
+                    const numChairs = Math.floor(Math.random() * 2) + 1; // 1 or 2 chairs
+                    for (let i = 0; i < numChairs; i++) {
+                        const randomIndex = Math.floor(Math.random() * emptyCells.length);
+                        const cell = emptyCells[randomIndex];
+                        this.createChair(cell.x, cell.z, chairTexture);
+                        emptyCells.splice(randomIndex, 1); // Remove used cell
+                    }
+                }
+            }
+
+            // ===== ENEMY CREATION =====
+            createEnemy(x, z) {
+                const textureLoader = new THREE.TextureLoader();
+                const enemyTexture = textureLoader.load('enemy.png');
+                enemyTexture.magFilter = enemyTexture.minFilter = THREE.NearestFilter;
+                enemyTexture.transparent = true;
+                
+                const enemyGeometry = new THREE.PlaneGeometry(0.8, 1.0);
+                const enemyMaterial = new THREE.MeshBasicMaterial({ 
+                    map: enemyTexture,
+                    transparent: true,
+                    alphaTest: 0.5,
+                    side: THREE.FrontSide
+                });
+                enemyMaterial.depthWrite = false;
+                
+                const enemy = new THREE.Mesh(enemyGeometry, enemyMaterial);
+                enemy.position.set(x, 0.5, z);
+                enemy.userData = { 
+                    type: 'enemy', 
+                    billboard: true,
+                    worldX: x,
+                    worldZ: z,
+                    moveSpeed: 0.3,
+                    lastMoveTime: 0
+                };
+                
+                this.sceneObjects.add(enemy);
+            }
+
+            createTreasure(x, z) {
+                const treasure = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.3, 0.3, 0.3),
+                    new THREE.MeshLambertMaterial({ color: 0xffd700 })
+                );
+                treasure.position.set(x, 0.15, z);
+                treasure.castShadow = true;
+                treasure.userData = { type: 'treasure' };
+                this.sceneObjects.add(treasure);
+            }
+
+            createExit(x, z) {
+                const frame = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.8, 1.5, 0.1),
+                    new THREE.MeshLambertMaterial({ color: 0x8b4513 })
+                );
+                frame.position.set(x, 0.75, z);
+                frame.castShadow = true;
+                frame.userData = { type: 'exit' };
+                this.sceneObjects.add(frame);
+            }
+
+            createSpider(x, z) {
+                const spiderGroup = new THREE.Group();
+                
+                // Body
+                const body = new THREE.Mesh(
+                    new THREE.SphereGeometry(0.15, 8, 6),
+                    new THREE.MeshLambertMaterial({ color: 0x2f1b14 })
+                );
+                body.position.y = 0.15;
+                body.castShadow = true;
+                spiderGroup.add(body);
+                
+                // Legs
+                for (let i = 0; i < 8; i++) {
+                    const leg = new THREE.Mesh(
+                        new THREE.CylinderGeometry(0.02, 0.02, 0.3),
+                        new THREE.MeshLambertMaterial({ color: 0x1a0f0a })
+                    );
+                    const angle = (i * Math.PI) / 4;
+                    leg.position.set(Math.cos(angle) * 0.2, 0.1, Math.sin(angle) * 0.2);
+                    leg.rotation.z = Math.cos(angle) * 0.5;
+                    leg.rotation.x = Math.sin(angle) * 0.5;
+                    leg.castShadow = true;
+                    spiderGroup.add(leg);
+                }
+                
+                spiderGroup.position.set(x, 0, z);
+                spiderGroup.userData = { type: 'spider' };
+                this.sceneObjects.add(spiderGroup);
+            }
+            
+            createStairsUp(x, z) {
+                const stairs = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.8, 0.3, 0.8),
+                    new THREE.MeshLambertMaterial({ color: 0x87ceeb })
+                );
+                stairs.position.set(x, 0.15, z);
+                stairs.castShadow = true;
+                stairs.userData = { type: 'stairsUp' };
+                this.sceneObjects.add(stairs);
+            }
+            
+            createStairsDown(x, z) {
+                const stairs = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.8, 0.2, 0.8),
+                    new THREE.MeshLambertMaterial({ color: 0x4682b4 })
+                );
+                stairs.position.set(x, 0.1, z);
+                stairs.castShadow = true;
+                stairs.userData = { type: 'stairsDown' };
+                this.sceneObjects.add(stairs);
+            }
+
+            createHangingCloth(x, z, clothTexture) {
+                const clothMaterial = new THREE.MeshLambertMaterial({ 
+                    map: clothTexture,
+                    transparent: true,
+                    alphaTest: 0.5,
+                    side: THREE.DoubleSide
+                });
+                
+                const cloth = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 1.2), clothMaterial);
+                cloth.position.set(x, 1.4, z);
+                cloth.rotation.y = Math.random() * Math.PI * 2;
+                cloth.userData = { type: 'cloth' };
+                this.sceneObjects.add(cloth);
+            }
+
+            createWaterDroplet(x, z) {
+                const dropletGeometry = new THREE.SphereGeometry(0.01, 3, 3);
+                const dropletMaterial = new THREE.MeshLambertMaterial({ 
+                    color: 0x808080,
+                    transparent: true,
+                    opacity: 0.7
+                });
+                
+                const droplet = new THREE.Mesh(dropletGeometry, dropletMaterial);
+                droplet.position.set(x, 1.9, z);
+                droplet.userData = { 
+                    type: 'waterDroplet',
+                    velocity: -0.02,
+                    startTime: Date.now()
+                };
+                
+                this.waterDroplets.push(droplet);
+                this.sceneObjects.add(droplet);
+            }
+
+            createDustParticle() {
+                const dustGeometry = new THREE.SphereGeometry(0.005, 3, 3);
+                const dustMaterial = new THREE.MeshBasicMaterial({ 
+                    color: 0xcccccc,
+                    transparent: true,
+                    opacity: 0.3
+                });
+                
+                const dust = new THREE.Mesh(dustGeometry, dustMaterial);
+                
+                // Random position around player
+                const playerRadius = 3;
+                const angle = Math.random() * Math.PI * 2;
+                const distance = Math.random() * playerRadius;
+                const x = this.playerPosition.x + Math.cos(angle) * distance;
+                const z = this.playerPosition.z + Math.sin(angle) * distance;
+                const y = 0.5 + Math.random() * 1.5;
+                
+                dust.position.set(x, y, z);
+                dust.userData = { 
+                    type: 'dustParticle',
+                    velocityX: (Math.random() - 0.5) * 0.002,
+                    velocityY: (Math.random() - 0.5) * 0.001,
+                    velocityZ: (Math.random() - 0.5) * 0.002,
+                    life: 10000 + Math.random() * 10000,
+                    startTime: Date.now()
+                };
+                
+                this.dustParticles.push(dust);
+                this.sceneObjects.add(dust);
+            }
+
+            createRotDecal(x, z, rotTexture) {
+                const rotMaterial = new THREE.MeshLambertMaterial({ 
+                    map: rotTexture,
+                    transparent: true,
+                    alphaTest: 0.5
+                });
+                
+                const rotDecal = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 0.4), rotMaterial);
+                rotDecal.rotation.x = -Math.PI / 2;
+                rotDecal.rotation.z = Math.random() * Math.PI * 2;
+                rotDecal.position.set(x, 0.001, z);
+                rotDecal.userData = { type: 'rot' };
+                this.sceneObjects.add(rotDecal);
+            }
+
+            createChair(x, z, chairTexture) {
+                const chairMaterial = new THREE.MeshLambertMaterial({ 
+                    map: chairTexture,
+                    transparent: true,
+                    alphaTest: 0.5,
+                    side: THREE.DoubleSide
+                });
+                
+                const chair = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.8), chairMaterial);
+                chair.position.set(x, 0.4, z);
+                chair.userData = { 
+                    type: 'chair',
+                    billboard: true
+                };
+                this.sceneObjects.add(chair);
+                
+                // Create shadow disc
+                const shadowGeometry = new THREE.CircleGeometry(0.3, 16);
+                const shadowMaterial = new THREE.MeshBasicMaterial({ 
+                    color: 0x000000,
+                    transparent: true,
+                    opacity: 0.3
+                });
+                
+                const shadow = new THREE.Mesh(shadowGeometry, shadowMaterial);
+                shadow.rotation.x = -Math.PI / 2;
+                shadow.position.set(x, 0.002, z + 0.15);
+                shadow.userData = { type: 'chairShadow' };
+                this.sceneObjects.add(shadow);
+            }
+
+
+
+            // ===== PLAYER CONTROLS =====
+            setupControls() {
+                this.moveSpeed = .7;
+                this.turnSpeed = 2.0;
+                this.mouseSensitivity = 0.002;
+                
+                // Keyboard
+                document.addEventListener('keydown', (e) => {
+                    this.keys[e.key] = true;
+                    
+                    if (e.key === ' ' || e.key === 'Enter') {
+                        this.attack();
+                        e.preventDefault();
+                    }
+                    if (e.key === 'f' || e.key === 'F') {
+                        this.lightOn = !this.lightOn;
+                        this.playerLight.visible = this.lightOn;
+                        e.preventDefault();
+                    }
+                    if (e.key === 'p' || e.key === 'P') {
+                        this.pixellationOn = !this.pixellationOn;
+                        e.preventDefault();
+                    }
+                    if (e.key === 'F11' || (e.key === 'Enter' && e.altKey)) {
+                        this.toggleFullscreen();
+                        e.preventDefault();
+                    }
+                });
+                
+                document.addEventListener('keyup', (e) => {
+                    this.keys[e.key] = false;
+                });
+                
+                // Mouse
+                this.canvas.addEventListener('click', () => {
+                    this.canvas.requestPointerLock();
+                });
+                
+                document.addEventListener('mousemove', (e) => {
+                    if (document.pointerLockElement === this.canvas) {
+                        this.mouseMovement.x += e.movementX;
+                        this.mouseMovement.y += e.movementY;
+                    }
+                });
+                
+                this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+                
+                // Resize handling
+                document.addEventListener('fullscreenchange', () => this.handleResize());
+                window.addEventListener('resize', () => this.handleResize());
+            }
+
+            // ===== GAME LOOP =====
+            gameLoop() {
+                requestAnimationFrame(() => this.gameLoop());
+                
+                this.processMovement();
+                this.updateEnemies();
+                this.updateWaterDroplets();
+                this.spawnWaterDroplets();
+                this.updateDustParticles();
+                this.spawnDustParticles();
+                this.updateCamera();
+                this.updateLighting();
+                this.render();
+            }
+
+            processMovement() {
+                const deltaTime = 0.016;
+                const forward = new THREE.Vector3();
+                const right = new THREE.Vector3();
+                const up = new THREE.Vector3(0, 1, 0);
+                
+                this.camera.getWorldDirection(forward);
+                right.crossVectors(forward, up).normalize();
+                
+                const movement = new THREE.Vector3();
+                
+                // WASD movement
+                if (this.keys['w'] || this.keys['W'] || this.keys['ArrowUp']) {
+                    movement.add(forward.clone().multiplyScalar(this.moveSpeed * deltaTime));
+                }
+                if (this.keys['s'] || this.keys['S'] || this.keys['ArrowDown']) {
+                    movement.add(forward.clone().multiplyScalar(-this.moveSpeed * deltaTime));
+                }
+                if (this.keys['a'] || this.keys['A'] || this.keys['ArrowLeft']) {
+                    movement.add(right.clone().multiplyScalar(-this.moveSpeed * deltaTime));
+                }
+                if (this.keys['d'] || this.keys['D'] || this.keys['ArrowRight']) {
+                    movement.add(right.clone().multiplyScalar(this.moveSpeed * deltaTime));
+                }
+                
+                    // Apply movement with improved collision detection
+                // Test X and Z movement separately to allow sliding along walls
+                const newX = this.playerPosition.x + movement.x;
+                const newZ = this.playerPosition.z + movement.z;
+                
+                // Try X movement first
+                if (this.canMoveTo({x: newX, y: this.playerPosition.y, z: this.playerPosition.z})) {
+                    this.playerPosition.x = this.wrapCoordinate(newX);
+                }
+                
+                // Then try Z movement
+                if (this.canMoveTo({x: this.playerPosition.x, y: this.playerPosition.y, z: newZ})) {
+                    this.playerPosition.z = this.wrapCoordinate(newZ);
+                }
+                
+                this.checkItemCollection();
+                
+                // Mouse look
+                this.playerRotation.y -= this.mouseMovement.x * this.mouseSensitivity;
+                this.playerRotation.x -= this.mouseMovement.y * this.mouseSensitivity;
+                this.playerRotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.playerRotation.x));
+                
+                this.mouseMovement.x = this.mouseMovement.y = 0;
+            }
+
+            updateEnemies() {
+                this.sceneObjects.children.forEach(child => {
+                    if (child.userData.type === 'treasure') {
+                        child.rotation.y += 0.02;
+                    } else if (child.userData.type === 'enemy' && child.userData.billboard) {
+                        this.updateEnemyAI(child);
+                        this.updateEnemyBillboard(child);
+                        this.updateEnemyVisibility(child);
+                    } else if (child.userData.type === 'chair' && child.userData.billboard) {
+                        this.updateChairBillboard(child);
+                    }
+                });
+            }
+
+            updateEnemyAI(enemy) {
+                const currentTime = Date.now();
+                if (currentTime - enemy.userData.lastMoveTime > 500) {
+                    const dirX = this.playerPosition.x - enemy.userData.worldX;
+                    const dirZ = this.playerPosition.z - enemy.userData.worldZ;
+                    const distance = Math.sqrt(dirX * dirX + dirZ * dirZ);
+                    
+                    if (distance > 1.5 && distance < 8) {
+                        // Calculate shortest path with wrapping
+                        let shortestDirX = dirX;
+                        let shortestDirZ = dirZ;
+                        
+                        const altDirX = dirX > 0 ? dirX - 10 : dirX + 10;
+                        if (Math.abs(altDirX) < Math.abs(dirX)) shortestDirX = altDirX;
+                        
+                        const altDirZ = dirZ > 0 ? dirZ - 10 : dirZ + 10;
+                        if (Math.abs(altDirZ) < Math.abs(dirZ)) shortestDirZ = altDirZ;
+                        
+                        const shortestDistance = Math.sqrt(shortestDirX * shortestDirX + shortestDirZ * shortestDirZ);
+                        const normalizedX = shortestDirX / shortestDistance;
+                        const normalizedZ = shortestDirZ / shortestDistance;
+                        
+                        let newX = enemy.userData.worldX + normalizedX * enemy.userData.moveSpeed;
+                        let newZ = enemy.userData.worldZ + normalizedZ * enemy.userData.moveSpeed;
+                        
+                        // Handle enemy wrapping
+                        newX = this.wrapCoordinate(newX);
+                        newZ = this.wrapCoordinate(newZ);
+                        
+                        if (this.canMoveTo({ x: newX, y: 0.4, z: newZ })) {
+                            enemy.userData.worldX = newX;
+                            enemy.userData.worldZ = newZ;
+                            enemy.position.x = newX;
+                            enemy.position.z = newZ;
+                        }
+                    }
+                    enemy.userData.lastMoveTime = currentTime;
+                }
+            }
+
+            updateEnemyBillboard(enemy) {
+                // Classic raycasting-style billboard
+                const dx = this.camera.position.x - enemy.position.x;
+                const dz = this.camera.position.z - enemy.position.z;
+                const angle = Math.atan2(dx, dz);
+                enemy.rotation.set(0, angle, 0);
+                enemy.position.y = 0.5;
+            }
+
+            updateEnemyVisibility(enemy) {
+                const distance = Math.sqrt(
+                    Math.pow(enemy.userData.worldX - this.playerPosition.x, 2) + 
+                    Math.pow(enemy.userData.worldZ - this.playerPosition.z, 2)
+                );
+                
+                const maxVisibleDistance = this.playerLight.distance;
+                let visibility = 1.0;
+                
+                if (distance > maxVisibleDistance) {
+                    visibility = 0.0;
+                } else {
+                    const distanceFactor = 1.0 - (distance / maxVisibleDistance);
+                    const intensityFactor = Math.min(1.0, this.playerLight.intensity / 10.0);
+                    visibility = distanceFactor * intensityFactor;
+                    visibility = Math.max(0.1, visibility);
+                }
+                
+                if (enemy.material) {
+                    const brightnessFactor = 0.1 + (visibility * 0.9);
+                    enemy.material.color.setRGB(brightnessFactor, brightnessFactor, brightnessFactor);
+                }
+            }
+
+            updateChairBillboard(chair) {
+                const dx = this.camera.position.x - chair.position.x;
+                const dz = this.camera.position.z - chair.position.z;
+                const angle = Math.atan2(dx, dz);
+                chair.rotation.set(0, angle, 0);
+            }
+
+            updateWaterDroplets() {
+                for (let i = this.waterDroplets.length - 1; i >= 0; i--) {
+                    const droplet = this.waterDroplets[i];
+                    
+                    droplet.position.y += droplet.userData.velocity;
+                    
+                    if (droplet.position.y <= 0.05) {
+                        this.sceneObjects.remove(droplet);
+                        this.waterDroplets.splice(i, 1);
+                    }
+                }
+            }
+
+            spawnWaterDroplets() {
+                const currentTime = Date.now();
+                if (currentTime - this.lastDropletTime > 400 + Math.random() * 800) {
+                    const emptyCells = [];
+                    for (let y = 0; y < this.map.length; y++) {
+                        for (let x = 0; x < this.map[y].length; x++) {
+                            if (this.map[y][x] === 0) {
+                                emptyCells.push({x: x + 0.5, z: y + 0.5});
+                            }
+                        }
+                    }
+                    
+                    if (emptyCells.length > 0) {
+                        // Spawn fewer droplets at once
+                        const numDroplets = Math.floor(Math.random() * 3) + 1;
+                        for (let i = 0; i < numDroplets; i++) {
+                            const randomCell = emptyCells[Math.floor(Math.random() * emptyCells.length)];
+                            this.createWaterDroplet(randomCell.x, randomCell.z);
+                        }
+                        this.lastDropletTime = currentTime;
+                    }
+                }
+            }
+
+            updateDustParticles() {
+                for (let i = this.dustParticles.length - 1; i >= 0; i--) {
+                    const dust = this.dustParticles[i];
+                    const currentTime = Date.now();
+                    
+                    // Update position
+                    dust.position.x += dust.userData.velocityX;
+                    dust.position.y += dust.userData.velocityY;
+                    dust.position.z += dust.userData.velocityZ;
+                    
+                    // Check if particle is too old or too far from player
+                    const age = currentTime - dust.userData.startTime;
+                    const distanceFromPlayer = Math.sqrt(
+                        Math.pow(dust.position.x - this.playerPosition.x, 2) +
+                        Math.pow(dust.position.z - this.playerPosition.z, 2)
+                    );
+                    
+                    if (age > dust.userData.life || distanceFromPlayer > 4) {
+                        this.sceneObjects.remove(dust);
+                        this.dustParticles.splice(i, 1);
+                    }
+                }
+            }
+
+            spawnDustParticles() {
+                const currentTime = Date.now();
+                if (currentTime - this.lastDustTime > 200 + Math.random() * 400) {
+                    // Maintain around 20-30 dust particles
+                    if (this.dustParticles.length < 25) {
+                        this.createDustParticle();
+                    }
+                    this.lastDustTime = currentTime;
+                }
+            }
+
+            updateCamera() {
+                this.camera.position.set(this.playerPosition.x, this.playerPosition.y, this.playerPosition.z);
+                this.camera.rotation.order = 'YXZ';
+                this.camera.rotation.y = this.playerRotation.y;
+                this.camera.rotation.x = this.playerRotation.x;
+                this.camera.rotation.z = 0;
+                
+                this.playerLight.position.copy(this.camera.position);
+            }
+
+            updateLighting() {
+                let minDistance = 2;
+                const rayDirections = [];
+                for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 8) {
+                    rayDirections.push(new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle)));
+                }
+                
+                for (const rayDir of rayDirections) {
+                    for (let distance = 0.25; distance < 2; distance += 0.2) {
+                        const checkPos = {
+                            x: this.playerPosition.x + rayDir.x * distance,
+                            z: this.playerPosition.z + rayDir.z * distance
+                        };
+                        
+                        const gridX = Math.floor(checkPos.x);
+                        const gridZ = Math.floor(checkPos.z);
+                        
+                        if (gridZ >= 0 && gridZ < this.map.length && gridX >= 0 && gridX < this.map[0].length) {
+                            if (this.map[gridZ][gridX] === 1) {
+                                minDistance = Math.min(minDistance, distance);
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                const maxIntensity = 10;
+                const baseIntensity = 7;
+                const distanceBoost = Math.max(0, (1 - minDistance) / 1);
+                const finalIntensity = baseIntensity + (maxIntensity - baseIntensity) * distanceBoost;
+                this.playerLight.intensity = Math.max(baseIntensity, finalIntensity);
+            }
+
+            render() {
+                if (this.pixellationOn) {
+                    this.pixelMaterial.uniforms.tDiffuse.value = this.renderTarget.texture;
+                    this.renderer.setRenderTarget(this.renderTarget);
+                    this.renderer.render(this.scene, this.camera);
+                    this.renderer.setRenderTarget(null);
+                    this.renderer.render(this.postProcessScene, this.postProcessCamera);
+                } else {
+                    this.renderer.render(this.scene, this.camera);
+                }
+            }
+
+            // ===== UTILITY FUNCTIONS =====
+            canMoveTo(position) {
+                const wrappedX = this.wrapCoordinate(position.x);
+                const wrappedZ = this.wrapCoordinate(position.z);
+                
+                // Add collision buffer around player (0.3 units)
+                const buffer = 0.3;
+                const checkPositions = [
+                    {x: wrappedX - buffer, z: wrappedZ - buffer}, // bottom-left
+                    {x: wrappedX + buffer, z: wrappedZ - buffer}, // bottom-right
+                    {x: wrappedX - buffer, z: wrappedZ + buffer}, // top-left
+                    {x: wrappedX + buffer, z: wrappedZ + buffer}  // top-right
+                ];
+                
+                // Check all corners of player's collision box
+                for (const checkPos of checkPositions) {
+                    const gridX = Math.floor(checkPos.x);
+                    const gridZ = Math.floor(checkPos.z);
+                    
+                    if (gridZ >= 0 && gridZ < this.map.length && gridX >= 0 && gridX < this.map[0].length) {
+                        if (this.map[gridZ][gridX] === 1) {
+                            return false; // Wall collision detected
+                        }
+                    } else {
+                        return false; // Out of bounds
+                    }
+                }
+                
+                return true;
+            }
+
+            wrapCoordinate(coord) {
+                if (coord < 0.2) return 9.8 - (0.2 - coord);
+                if (coord > 9.8) return 0.2 + (coord - 9.8);
+                return coord;
+            }
+
+            attack() {
+                const forward = new THREE.Vector3();
+                this.camera.getWorldDirection(forward);
+                
+                // Check for moving enemies
+                let enemyHit = false;
+                this.sceneObjects.children.forEach(child => {
+                    if (child.userData.type === 'enemy' && child.userData.billboard && !enemyHit) {
+                        const enemyDistance = Math.sqrt(
+                            Math.pow(child.userData.worldX - this.playerPosition.x, 2) + 
+                            Math.pow(child.userData.worldZ - this.playerPosition.z, 2)
+                        );
+                        
+                        const dirToEnemy = {
+                            x: child.userData.worldX - this.playerPosition.x,
+                            z: child.userData.worldZ - this.playerPosition.z
+                        };
+                        const dotProduct = forward.x * dirToEnemy.x + forward.z * dirToEnemy.z;
+                        
+                        if (enemyDistance < 2.5 && dotProduct > 0.5) {
+                            this.sceneObjects.remove(child);
+                            enemyHit = true;
+                        }
+                    }
+                });
+                
+                if (enemyHit) return;
+                
+                // Check for spider
+                const checkDistance = 2.0;
+                const checkPos = {
+                    x: this.playerPosition.x + forward.x * checkDistance,
+                    z: this.playerPosition.z + forward.z * checkDistance
+                };
+                
+                const gridX = Math.floor(checkPos.x);
+                const gridZ = Math.floor(checkPos.z);
+                
+                if (gridZ >= 0 && gridZ < this.map.length && gridX >= 0 && gridX < this.map[0].length) {
+                    const cell = this.map[gridZ][gridX];
+                    if (cell === 4 && !this.spiderKilled) {
+                        this.spiderKilled = true;
+                        this.map[gridZ][gridX] = 0;
+                        this.build3DWorld();
+                    }
+                }
+            }
+
+            checkItemCollection() {
+                const gridX = Math.floor(this.playerPosition.x);
+                const gridZ = Math.floor(this.playerPosition.z);
+                
+                if (gridZ >= 0 && gridZ < this.map.length && gridX >= 0 && gridX < this.map[0].length) {
+                    const cell = this.map[gridZ][gridX];
+                    // console.log(">>> CELL", cell)
+                    
+                    if (cell === 2 && !this.treasureFound) {
+                        this.treasureFound = true;
+                        this.map[gridZ][gridX] = 0;
+                        this.build3DWorld();
+                    } else if (cell === 3) {
+                        if (this.spiderKilled) {
+                            this.currentLevel++;
+                            this.initializeFloors();
+                            this.build3DWorld();
+                        }
+                    } else if (cell === 6) {
+                        // Stairs up
+                        if (this.currentFloorIndex < this.floors.length - 1 && !this.isTransitioning) {
+                            this.changeFloor(this.currentFloorIndex - 1);
+                        }
+                    } else if (cell === 7) {
+                        // Stairs down
+                        if (this.currentFloorIndex > 0 && !this.isTransitioning) {
+                            this.changeFloor(this.currentFloorIndex + 1);
+                        }
+                    }
+                }
+            }
+
+            toggleFullscreen() {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen().catch(() => {});
+                } else {
+                    document.exitFullscreen();
+                }
+            }
+
+            changeFloor(newFloorIndex) {
+                if (this.isTransitioning) return;
+                
+                this.isTransitioning = true;
+                
+                // Fade to black
+                this.fadeOverlay.style.opacity = '1';
+                
+                setTimeout(() => {
+                    // Change floor while screen is black
+                    this.currentFloorIndex = newFloorIndex;
+                    this.map = this.floors[this.currentFloorIndex];
+                    this.build3DWorld();
+                    console.log('Switched to floor:', this.currentFloorIndex + 1);
+                    
+                    // Fade back in
+                    setTimeout(() => {
+                        this.fadeOverlay.style.opacity = '0';
+                        
+                        setTimeout(() => {
+                            this.isTransitioning = false;
+                        }, 500);
+                    }, 100);
+                }, 500);
+            }
+
+            handleResize() {
+                let width = 800, height = 600;
+                if (document.fullscreenElement) {
+                    width = window.innerWidth;
+                    height = window.innerHeight;
+                }
+                
+                this.camera.aspect = width / height;
+                this.camera.updateProjectionMatrix();
+                this.renderer.setSize(width, height);
+                this.renderTarget.setSize(width, height);
+                this.pixelMaterial.uniforms.resolution.value.set(width, height);
+            }
+        }
+
+        // ===== START GAME =====
+        new DungeonCrawler();
+    </script>
+</body>
+</html>

@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2D Level Editor</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background-color: #2a2a2a;
+            color: white;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .toolbar {
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #3a3a3a;
+            border-radius: 5px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .tool-group {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+        }
+
+        .tool-btn {
+            padding: 8px 12px;
+            background-color: #555;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .tool-btn:hover {
+            background-color: #666;
+        }
+
+        .tool-btn.active {
+            background-color: #007acc;
+        }
+
+        .size-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        input[type="number"] {
+            width: 60px;
+            padding: 5px;
+            background-color: #555;
+            color: white;
+            border: 1px solid #666;
+            border-radius: 3px;
+        }
+
+        #levelCanvas {
+            border: 2px solid #555;
+            background-color: #1a1a1a;
+            cursor: crosshair;
+            display: block;
+            margin: 20px 0;
+        }
+
+        .output {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #3a3a3a;
+            border-radius: 5px;
+        }
+
+        #arrayOutput {
+            background-color: #1a1a1a;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #555;
+        }
+
+        .legend {
+            margin-top: 15px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border: 1px solid #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>2D Level Editor</h1>
+        
+        <div class="toolbar">
+            <div class="tool-group">
+                <label>Floor:</label>
+                <button class="tool-btn" id="prevFloorBtn">◀</button>
+                <span id="currentFloorDisplay">Floor 1</span>
+                <button class="tool-btn" id="nextFloorBtn">▶</button>
+                <button class="tool-btn" id="addFloorBtn">Add Floor</button>
+                <button class="tool-btn" id="deleteFloorBtn">Delete Floor</button>
+            </div>
+            
+            <div class="tool-group">
+                <label>Tools:</label>
+                <button class="tool-btn active" data-tool="0">Floor (0)</button>
+                <button class="tool-btn" data-tool="1">Wall (1)</button>
+                <button class="tool-btn" data-tool="2">Treasure (2)</button>
+                <button class="tool-btn" data-tool="3">Exit (3)</button>
+                <button class="tool-btn" data-tool="4">Spider (4)</button>
+                <button class="tool-btn" data-tool="5">Enemy (5)</button>
+                <button class="tool-btn" data-tool="6">Stairs Up (6)</button>
+                <button class="tool-btn" data-tool="7">Stairs Down (7)</button>
+            </div>
+            
+            <div class="size-controls">
+                <label>Size:</label>
+                <input type="number" id="gridWidth" value="10" min="5" max="50">
+                <span>×</span>
+                <input type="number" id="gridHeight" value="10" min="5" max="50">
+                <button class="tool-btn" id="resizeBtn">Resize</button>
+            </div>
+            
+            <div class="tool-group">
+                <button class="tool-btn" id="clearBtn">Clear All</button>
+                <button class="tool-btn" id="fillWallsBtn">Fill Walls</button>
+                <button class="tool-btn" id="printBtn">Print Array</button>
+            </div>
+        </div>
+
+        <canvas id="levelCanvas"></canvas>
+
+        <div class="output">
+            <h3>Array Output:</h3>
+            <div id="arrayOutput">Click "Print Array" to generate the 2D array...</div>
+            
+            <div class="legend">
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #444;"></div>
+                    <span>0 = Floor</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #8b4513;"></div>
+                    <span>1 = Wall</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #ffd700;"></div>
+                    <span>2 = Treasure</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #00ff00;"></div>
+                    <span>3 = Exit</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #8b008b;"></div>
+                    <span>4 = Spider</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #ff4444;"></div>
+                    <span>5 = Enemy</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #87ceeb;"></div>
+                    <span>6 = Stairs Up</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: #4682b4;"></div>
+                    <span>7 = Stairs Down</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class LevelEditor {
+            constructor() {
+                this.canvas = document.getElementById('levelCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.cellSize = 30;
+                this.gridWidth = 10;
+                this.gridHeight = 10;
+                this.currentTool = 0;
+                this.isDrawing = false;
+                this.currentFloor = 0;
+                
+                // Initialize with one floor
+                this.floors = [
+                    Array(this.gridHeight).fill().map(() => Array(this.gridWidth).fill(0))
+                ];
+                
+                this.setupCanvas();
+                this.setupEventListeners();
+                this.render();
+            }
+
+            setupCanvas() {
+                this.canvas.width = this.gridWidth * this.cellSize;
+                this.canvas.height = this.gridHeight * this.cellSize;
+                this.canvas.style.width = this.canvas.width + 'px';
+                this.canvas.style.height = this.canvas.height + 'px';
+            }
+
+            setupEventListeners() {
+                // Floor navigation
+                document.getElementById('prevFloorBtn').addEventListener('click', () => {
+                    this.switchFloor(this.currentFloor - 1);
+                });
+                
+                document.getElementById('nextFloorBtn').addEventListener('click', () => {
+                    this.switchFloor(this.currentFloor + 1);
+                });
+                
+                document.getElementById('addFloorBtn').addEventListener('click', () => {
+                    this.addFloor();
+                });
+                
+                document.getElementById('deleteFloorBtn').addEventListener('click', () => {
+                    this.deleteFloor();
+                });
+                
+                // Tool selection
+                document.querySelectorAll('[data-tool]').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        document.querySelector('.tool-btn.active').classList.remove('active');
+                        btn.classList.add('active');
+                        this.currentTool = parseInt(btn.dataset.tool);
+                    });
+                });
+
+                // Canvas drawing
+                this.canvas.addEventListener('mousedown', (e) => {
+                    this.isDrawing = true;
+                    this.draw(e);
+                });
+
+                this.canvas.addEventListener('mousemove', (e) => {
+                    if (this.isDrawing) {
+                        this.draw(e);
+                    }
+                });
+
+                this.canvas.addEventListener('mouseup', () => {
+                    this.isDrawing = false;
+                });
+
+                this.canvas.addEventListener('mouseleave', () => {
+                    this.isDrawing = false;
+                });
+
+                // Resize controls
+                document.getElementById('resizeBtn').addEventListener('click', () => {
+                    this.resize();
+                });
+
+                // Utility buttons
+                document.getElementById('clearBtn').addEventListener('click', () => {
+                    this.clearAll();
+                });
+
+                document.getElementById('fillWallsBtn').addEventListener('click', () => {
+                    this.fillWalls();
+                });
+
+                document.getElementById('printBtn').addEventListener('click', () => {
+                    this.printArray();
+                });
+
+                // Prevent context menu
+                this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+            }
+
+            draw(e) {
+                const rect = this.canvas.getBoundingClientRect();
+                const x = Math.floor((e.clientX - rect.left) / this.cellSize);
+                const y = Math.floor((e.clientY - rect.top) / this.cellSize);
+
+                if (x >= 0 && x < this.gridWidth && y >= 0 && y < this.gridHeight) {
+                    this.floors[this.currentFloor][y][x] = this.currentTool;
+                    this.renderCell(x, y);
+                }
+            }
+
+            renderCell(x, y) {
+                const value = this.floors[this.currentFloor][y][x];
+                const colors = {
+                    0: '#444444',    // Floor - dark gray
+                    1: '#8b4513',    // Wall - brown
+                    2: '#ffd700',    // Treasure - gold
+                    3: '#00ff00',    // Exit - green
+                    4: '#8b008b',    // Spider - dark magenta
+                    5: '#ff4444',    // Enemy - red
+                    6: '#87ceeb',    // Stairs Up - sky blue
+                    7: '#4682b4'     // Stairs Down - steel blue
+                };
+
+                this.ctx.fillStyle = colors[value] || '#444444';
+                this.ctx.fillRect(x * this.cellSize, y * this.cellSize, this.cellSize, this.cellSize);
+                
+                // Draw grid lines
+                this.ctx.strokeStyle = '#666666';
+                this.ctx.lineWidth = 1;
+                this.ctx.strokeRect(x * this.cellSize, y * this.cellSize, this.cellSize, this.cellSize);
+            }
+
+            render() {
+                // Clear canvas
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+                // Draw all cells
+                for (let y = 0; y < this.gridHeight; y++) {
+                    for (let x = 0; x < this.gridWidth; x++) {
+                        this.renderCell(x, y);
+                    }
+                }
+            }
+
+            resize() {
+                const newWidth = parseInt(document.getElementById('gridWidth').value);
+                const newHeight = parseInt(document.getElementById('gridHeight').value);
+
+                if (newWidth < 5 || newWidth > 50 || newHeight < 5 || newHeight > 50) {
+                    alert('Grid size must be between 5 and 50');
+                    return;
+                }
+
+                // Resize all floors
+                for (let f = 0; f < this.floors.length; f++) {
+                    const newMap = Array(newHeight).fill().map(() => Array(newWidth).fill(0));
+                    
+                    // Copy existing data
+                    for (let y = 0; y < Math.min(this.gridHeight, newHeight); y++) {
+                        for (let x = 0; x < Math.min(this.gridWidth, newWidth); x++) {
+                            newMap[y][x] = this.floors[f][y][x];
+                        }
+                    }
+                    
+                    this.floors[f] = newMap;
+                }
+
+                this.gridWidth = newWidth;
+                this.gridHeight = newHeight;
+
+                this.setupCanvas();
+                this.render();
+            }
+
+            clearAll() {
+                this.floors[this.currentFloor] = Array(this.gridHeight).fill().map(() => Array(this.gridWidth).fill(0));
+                this.render();
+            }
+
+            fillWalls() {
+                // Fill border with walls
+                for (let y = 0; y < this.gridHeight; y++) {
+                    for (let x = 0; x < this.gridWidth; x++) {
+                        if (x === 0 || x === this.gridWidth - 1 || y === 0 || y === this.gridHeight - 1) {
+                            this.floors[this.currentFloor][y][x] = 1;
+                        }
+                    }
+                }
+                this.render();
+            }
+
+            switchFloor(floorIndex) {
+                if (floorIndex >= 0 && floorIndex < this.floors.length) {
+                    this.currentFloor = floorIndex;
+                    this.updateFloorDisplay();
+                    this.render();
+                }
+            }
+            
+            addFloor() {
+                const newFloor = Array(this.gridHeight).fill().map(() => Array(this.gridWidth).fill(0));
+                this.floors.push(newFloor);
+                this.switchFloor(this.floors.length - 1);
+            }
+            
+            deleteFloor() {
+                if (this.floors.length > 1) {
+                    this.floors.splice(this.currentFloor, 1);
+                    if (this.currentFloor >= this.floors.length) {
+                        this.currentFloor = this.floors.length - 1;
+                    }
+                    this.updateFloorDisplay();
+                    this.render();
+                } else {
+                    alert('Cannot delete the last floor!');
+                }
+            }
+            
+            updateFloorDisplay() {
+                document.getElementById('currentFloorDisplay').textContent = `Floor ${this.currentFloor + 1}`;
+                document.getElementById('prevFloorBtn').disabled = this.currentFloor === 0;
+                document.getElementById('nextFloorBtn').disabled = this.currentFloor === this.floors.length - 1;
+                document.getElementById('deleteFloorBtn').disabled = this.floors.length === 1;
+            }
+
+            printArray() {
+                const output = document.getElementById('arrayOutput');
+                let arrayString = 'const levelMaps = [\n';
+                
+                for (let f = 0; f < this.floors.length; f++) {
+                    arrayString += `    // Floor ${f + 1}\n`;
+                    arrayString += '    [\n';
+                    
+                    for (let y = 0; y < this.gridHeight; y++) {
+                        arrayString += '        [' + this.floors[f][y].join(', ') + ']';
+                        if (y < this.gridHeight - 1) {
+                            arrayString += ',';
+                        }
+                        arrayString += '\n';
+                    }
+                    
+                    arrayString += '    ]';
+                    if (f < this.floors.length - 1) {
+                        arrayString += ',';
+                    }
+                    arrayString += '\n';
+                }
+                
+                arrayString += '];\n\n';
+                arrayString += '// To use in your game:\n';
+                arrayString += '// this.floors = levelMaps;\n';
+                arrayString += '// this.currentFloorIndex = 0;\n';
+                arrayString += '// this.map = this.floors[this.currentFloorIndex];\n\n';
+                arrayString += '// Stair values:\n';
+                arrayString += '// 6 = Stairs Up (goes to currentFloorIndex + 1)\n';
+                arrayString += '// 7 = Stairs Down (goes to currentFloorIndex - 1)\n\n';
+                arrayString += `// Total floors: ${this.floors.length}\n`;
+                arrayString += '// Grid size: ' + this.gridWidth + 'x' + this.gridHeight;
+
+                output.textContent = arrayString;
+                
+                // Also copy to clipboard
+                const clipboardData = JSON.stringify(this.floors, null, 2);
+                navigator.clipboard.writeText(clipboardData).then(() => {
+                    console.log('Multi-floor array copied to clipboard!');
+                });
+            }
+        }
+
+        // Initialize the editor
+        const editor = new LevelEditor();
+        editor.updateFloorDisplay();
+    </script>
+</body>
+</html>

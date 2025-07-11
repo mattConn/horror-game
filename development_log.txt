@@ -1,0 +1,128 @@
+DUNGEON CRAWLER DEVELOPMENT LOG
+===============================
+
+PROJECT OVERVIEW:
+- 3D first-person dungeon crawler built with Three.js
+- Raycasting-style aesthetics with 2D sprite enemies
+- Multi-floor support with level editor
+- Dynamic lighting system with player lantern
+
+MAIN FILES:
+- ascii_dungeon_crawler.html - Main game file
+- level_editor.html - Multi-floor level editor
+- floor.png - Wooden floor texture
+- enemy.png - 2D humanoid enemy sprite
+- wall.png - Wall texture (referenced but not provided)
+
+DEVELOPMENT TIMELINE:
+
+INITIAL SETUP:
+- User requested floor texture usage: floor.png for floors only, wall.png for walls
+- Added 2D enemy sprite (enemy.png) with billboard behavior (always faces player)
+- Removed minimap, adjusted enemy height to prevent ceiling clipping
+
+LIGHTING & EFFECTS:
+- Added noise filter (later removed - too dark)
+- Implemented flashlight system, converted to lantern
+- Added dynamic lighting with wall proximity detection
+- Reduced lantern distance multiple times per user feedback
+- Added pixellation post-processing shader
+- Enemy visibility changes based on lantern distance (brightness, not transparency)
+
+MOVEMENT & CONTROLS:
+- Canvas size set to 800x600
+- Removed direction buttons, added mouse look controls
+- Fixed mouse look inversion issues
+- Added fullscreen mode (Alt+Enter toggle)
+- Implemented pointer lock for FPS controls
+
+WORLD FEATURES:
+- Raycasting-style enemy rendering (always facing player)
+- Infinite map wrapping (teleport to opposite side at edges)
+- Wider hallways in maze generation
+- Enemy AI that follows player with wrapping consideration
+
+COLLISION SYSTEM:
+- Original: Basic grid-based collision
+- LATEST: Improved collision with 0.3 unit buffer around player
+- Separate X/Z movement testing for wall sliding
+- Corner-based collision detection (checks 4 corners of player box)
+
+MULTI-FLOOR SYSTEM:
+- Replaced generateMaze() with floors array system
+- Added currentFloorIndex to track active floor
+- New tile types: Stairs Up (6), Stairs Down (7)
+- Floor transitions via checkItemCollection()
+- Sample 2-floor layout included
+
+LEVEL EDITOR FEATURES:
+- Grid-based drawing with mouse
+- 8 tile types: Floor(0), Wall(1), Treasure(2), Exit(3), Spider(4), Enemy(5), StairsUp(6), StairsDown(7)
+- Multi-floor support with floor navigation
+- Add/delete floors functionality
+- Exports complete floors array for game integration
+- Auto-copy to clipboard
+
+CURRENT GAME STRUCTURE:
+===============================
+
+GAME STATE:
+- playerPosition: {x, y, z}
+- playerRotation: {x, y}
+- currentFloorIndex: tracks active floor
+- floors: array of 2D arrays representing each floor level
+- map: points to current active floor (floors[currentFloorIndex])
+
+TILE VALUES:
+0 = Floor
+1 = Wall
+2 = Treasure
+3 = Exit
+4 = Spider
+5 = Enemy (humanoid)
+6 = Stairs Up
+7 = Stairs Down
+
+KEY FUNCTIONS:
+- initializeFloors(): Loads floors array and sets initial map
+- build3DWorld(): Renders 3D world from current floor map
+- createEnemy(): Creates 2D billboard sprite enemy
+- createStairsUp/Down(): Creates staircase objects
+- changeFloor(): Switches between floors and rebuilds world
+- processMovement(): Handles player movement with improved collision
+- canMoveTo(): Collision detection with corner checking and buffer
+- checkItemCollection(): Handles interactions (treasure, stairs, exit)
+
+LIGHTING SYSTEM:
+- Ambient light: very dim (0x101010, 0.05)
+- Player lantern: PointLight with intensity 8, distance 2, decay 2
+- Dynamic intensity based on wall proximity
+- Enemy visibility tied to lantern distance (brightness adjustment)
+
+CONTROLS:
+- WASD: Movement
+- Mouse: Look around (pointer lock)
+- Space/Enter: Attack
+- F: Toggle lantern
+- P: Toggle pixellation
+- Alt+Enter: Toggle fullscreen
+
+POST-PROCESSING:
+- Pixellation shader (toggleable)
+- Nearest neighbor filtering for retro look
+- Render target system for shader effects
+
+INTEGRATION NOTES:
+- To use level editor output: replace floors array in initializeFloors()
+- Staircase navigation automatic via tile values 6 and 7
+- Enemy AI works across floor boundaries with wrapping
+- All textures use nearest neighbor filtering for pixel art style
+
+USER FEEDBACK PATTERNS:
+- Preferred shorter lantern distances (requested reduction multiple times)
+- Wanted brightness changes for enemies, not transparency
+- Requested code cleanup and organization
+- Emphasized wall collision prevention
+
+LATEST STATE:
+Game successfully converted to multi-floor system with improved collision detection. Level editor provides complete multi-floor creation workflow. All user requests implemented and code organized for maintainability.
