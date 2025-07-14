@@ -137,68 +137,352 @@
                 this.scene.add(ambientLight);
                 
                 // Player lantern
-                this.playerLight = new THREE.PointLight(0xffffff, 35, 3, 2);
+                this.playerLight = new THREE.PointLight(0xffffff, 15, 2, 2);
                 this.playerLight.position.set(0, 0.6, 0);
                 this.playerLight.castShadow = true;
                 this.playerLight.shadow.mapSize.width = 2048;
                 this.playerLight.shadow.mapSize.height = 2048;
                 this.playerLight.shadow.camera.near = 0.1;
-                this.playerLight.shadow.camera.far = 3;
+                this.playerLight.shadow.camera.far = 2;
                 this.scene.add(this.playerLight);
             }
 
             // ===== FLOORS INITIALIZATION =====
             initializeFloors() {
-                // Sample multi-floor layout - replace with your level editor output
-                this.floors = [
-    // Floor 1
-    [
-        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-        [1, 0, 1, 1, 1, 1, 1, 1, 1, 1],
-        [1, 0, 0, 0, 1, 0, 0, 0, 0, 1],
-        [1, 0, 1, 0, 1, 0, 1, 1, 1, 1],
-        [1, 0, 1, 0, 1, 0, 1, 1, 1, 1],
-        [1, 1, 1, 0, 1, 0, 1, 1, 1, 1],
-        [1, 0, 0, 0, 0, 0, 0, 1, 1, 1],
-        [1, 1, 1, 1, 0, 0, 0, 1, 7, 1],
-        [1, 1, 1, 1, 0, 0, 0, 0, 0, 1],
-        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-    ],
-    // Floor 2
-    [
-        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-        [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-    ]
-];
-
+                // Generate a new level procedurally
+                this.generateLevel();
                 
-                // Set current map to the starting floor
-                this.map = this.floors[this.currentFloorIndex];
-                this.placeGameObjects();
-
                 // dump current floor
-                console.log('Current floor:', this.currentFloorIndex);
+                console.log('Current level:', this.currentLevel);
                 console.log(this.map);
+            }
+
+            // ===== PROCEDURAL LEVEL GENERATION =====
+            generateLevel() {
+                // Determine level type and size
+                const levelTypes = ['maze', 'large_maze', 'open_room', 'mixed'];
+                const levelType = levelTypes[Math.floor(Math.random() * levelTypes.length)];
+                
+                let levelSize;
+                if (levelType === 'large_maze') {
+                    levelSize = Math.min(15 + Math.floor(this.currentLevel / 2), 30);
+                } else if (levelType === 'open_room') {
+                    levelSize = Math.min(12 + Math.floor(this.currentLevel / 4), 20);
+                } else {
+                    const baseSize = 10;
+                    const sizeVariation = Math.floor(this.currentLevel / 3);
+                    levelSize = Math.min(baseSize + sizeVariation, 20);
+                }
+                
+                // Create empty map
+                this.map = [];
+                for (let z = 0; z < levelSize; z++) {
+                    this.map[z] = [];
+                    for (let x = 0; x < levelSize; x++) {
+                        this.map[z][x] = 1; // Start with all walls
+                    }
+                }
+                
+                // Generate level based on type
+                if (levelType === 'open_room') {
+                    this.generateOpenRoom(levelSize);
+                } else if (levelType === 'mixed') {
+                    this.generateMixedLevel(levelSize);
+                } else {
+                    this.generateMaze(levelSize);
+                }
+                
+                // Ensure player starting position is clear
+                this.map[1][1] = 0;
+                
+                // Place door in a bend with guaranteed path
+                this.placeDoorInBend(levelSize);
+                
+                this.placeGameObjects();
+                
+                console.log('Generated', levelType, 'level of size', levelSize);
+            }
+            
+            generateOpenRoom(size) {
+                // Create a large open area with minimal walls
+                for (let z = 2; z < size - 2; z++) {
+                    for (let x = 2; x < size - 2; x++) {
+                        this.map[z][x] = 0;
+                    }
+                }
+                
+                // Add some scattered walls and pillars for variety
+                const numObstacles = Math.floor(size * 0.3);
+                for (let i = 0; i < numObstacles; i++) {
+                    const x = 3 + Math.floor(Math.random() * (size - 6));
+                    const z = 3 + Math.floor(Math.random() * (size - 6));
+                    
+                    // Create small wall clusters
+                    if (Math.random() < 0.7) {
+                        this.map[z][x] = 1;
+                        if (Math.random() < 0.5 && x + 1 < size - 2) this.map[z][x + 1] = 1;
+                        if (Math.random() < 0.5 && z + 1 < size - 2) this.map[z + 1][x] = 1;
+                    }
+                }
+            }
+            
+            generateMixedLevel(size) {
+                // Start with maze generation
+                this.generateMaze(size);
+                
+                // Clear out some large areas to create mixed open/maze feel
+                const numClearings = Math.floor(size / 8);
+                for (let i = 0; i < numClearings; i++) {
+                    const centerX = 3 + Math.floor(Math.random() * (size - 6));
+                    const centerZ = 3 + Math.floor(Math.random() * (size - 6));
+                    const radius = 2 + Math.floor(Math.random() * 3);
+                    
+                    // Clear circular area
+                    for (let z = Math.max(1, centerZ - radius); z < Math.min(size - 1, centerZ + radius); z++) {
+                        for (let x = Math.max(1, centerX - radius); x < Math.min(size - 1, centerX + radius); x++) {
+                            const dist = Math.sqrt((x - centerX) ** 2 + (z - centerZ) ** 2);
+                            if (dist <= radius) {
+                                this.map[z][x] = 0;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            generateMaze(size) {
+                const stack = [];
+                const visited = new Set();
+                
+                // Start at (1,1)
+                const start = { x: 1, z: 1 };
+                stack.push(start);
+                visited.add(`${start.x},${start.z}`);
+                this.map[start.z][start.x] = 0;
+                
+                const directions = [
+                    { x: 0, z: 2 },  // North
+                    { x: 2, z: 0 },  // East
+                    { x: 0, z: -2 }, // South
+                    { x: -2, z: 0 }  // West
+                ];
+                
+                while (stack.length > 0) {
+                    const current = stack[stack.length - 1];
+                    
+                    // Get unvisited neighbors
+                    const neighbors = [];
+                    for (const dir of directions) {
+                        const next = { 
+                            x: current.x + dir.x, 
+                            z: current.z + dir.z 
+                        };
+                        
+                        if (next.x > 0 && next.x < size - 1 && 
+                            next.z > 0 && next.z < size - 1 && 
+                            !visited.has(`${next.x},${next.z}`)) {
+                            neighbors.push(next);
+                        }
+                    }
+                    
+                    if (neighbors.length > 0) {
+                        // Choose random neighbor
+                        const next = neighbors[Math.floor(Math.random() * neighbors.length)];
+                        
+                        // Remove wall between current and next
+                        const wallX = current.x + (next.x - current.x) / 2;
+                        const wallZ = current.z + (next.z - current.z) / 2;
+                        this.map[wallZ][wallX] = 0;
+                        this.map[next.z][next.x] = 0;
+                        
+                        visited.add(`${next.x},${next.z}`);
+                        stack.push(next);
+                    } else {
+                        stack.pop();
+                    }
+                }
+                
+                // Add some random openings for variety (complexity increases with level)
+                const extraOpenings = Math.min(Math.floor(this.currentLevel / 2), 10);
+                for (let i = 0; i < extraOpenings; i++) {
+                    const x = 1 + Math.floor(Math.random() * (size - 2));
+                    const z = 1 + Math.floor(Math.random() * (size - 2));
+                    if (this.map[z][x] === 1) {
+                        this.map[z][x] = 0;
+                    }
+                }
+            }
+            
+            placeDoorInBend(size) {
+                // Find corridor bends or wall positions that create natural door placements
+                const doorCandidates = [];
+                
+                for (let z = 2; z < size - 2; z++) {
+                    for (let x = 2; x < size - 2; x++) {
+                        if (this.map[z][x] === 0) { // Floor space
+                            // Look for positions where we can place a door in a wall that forms a natural bend
+                            const doorPositions = this.findDoorPositionsForBend(x, z, size);
+                            
+                            for (const doorPos of doorPositions) {
+                                // Verify this door position has a path to player start
+                                if (this.hasPathTo(doorPos.x, doorPos.z, 1, 1, size)) {
+                                    doorCandidates.push(doorPos);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Place door at random valid location
+                if (doorCandidates.length > 0) {
+                    const doorPos = doorCandidates[Math.floor(Math.random() * doorCandidates.length)];
+                    this.map[doorPos.z][doorPos.x] = 8; // 8 = door
+                } else {
+                    // Fallback: find any wall adjacent to a corridor
+                    this.fallbackDoorPlacement(size);
+                }
+            }
+            
+            findDoorPositionsForBend(floorX, floorZ, size) {
+                const doorPositions = [];
+                
+                // Check the 4 directions from this floor position
+                const directions = [
+                    { x: 0, z: -1, name: 'north' },  // North wall
+                    { x: 1, z: 0, name: 'east' },   // East wall
+                    { x: 0, z: 1, name: 'south' },  // South wall
+                    { x: -1, z: 0, name: 'west' }   // West wall
+                ];
+                
+                for (const dir of directions) {
+                    const wallX = floorX + dir.x;
+                    const wallZ = floorZ + dir.z;
+                    
+                    // Check if this is a wall
+                    if (wallX >= 0 && wallX < size && wallZ >= 0 && wallZ < size && 
+                        this.map[wallZ][wallX] === 1) {
+                        
+                        // Check if this wall position forms a good bend/corner
+                        if (this.isGoodDoorLocation(wallX, wallZ, dir.name, size)) {
+                            doorPositions.push({ 
+                                x: wallX, 
+                                z: wallZ, 
+                                orientation: dir.name,
+                                adjacentFloor: { x: floorX, z: floorZ }
+                            });
+                        }
+                    }
+                }
+                
+                return doorPositions;
+            }
+            
+            isGoodDoorLocation(wallX, wallZ, orientation, size) {
+                // Check if this wall position is in a corner or bend
+                // This creates more natural door placements
+                
+                const adjacentWalls = this.countAdjacentWalls(wallX, wallZ, size);
+                
+                // Good door locations have 2-3 adjacent walls (corners/bends)
+                // but not completely surrounded (4 walls)
+                return adjacentWalls >= 2 && adjacentWalls < 4;
+            }
+            
+            countAdjacentWalls(x, z, size) {
+                let wallCount = 0;
+                const directions = [
+                    { x: 0, z: -1 }, { x: 1, z: 0 }, 
+                    { x: 0, z: 1 }, { x: -1, z: 0 }
+                ];
+                
+                for (const dir of directions) {
+                    const checkX = x + dir.x;
+                    const checkZ = z + dir.z;
+                    
+                    if (checkX < 0 || checkX >= size || checkZ < 0 || checkZ >= size ||
+                        this.map[checkZ][checkX] === 1) {
+                        wallCount++;
+                    }
+                }
+                
+                return wallCount;
+            }
+            
+            fallbackDoorPlacement(size) {
+                // Simple fallback: find any wall adjacent to floor
+                for (let z = 1; z < size - 1; z++) {
+                    for (let x = 1; x < size - 1; x++) {
+                        if (this.map[z][x] === 1) { // Wall
+                            const adjacent = [
+                                { x: x + 1, z: z }, { x: x - 1, z: z },
+                                { x: x, z: z + 1 }, { x: x, z: z - 1 }
+                            ];
+                            
+                            for (const adj of adjacent) {
+                                if (adj.x >= 0 && adj.x < size && adj.z >= 0 && adj.z < size &&
+                                    this.map[adj.z][adj.x] === 0) {
+                                    
+                                    if (this.hasPathTo(x, z, 1, 1, size)) {
+                                        this.map[z][x] = 8;
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            hasPathTo(fromX, fromZ, toX, toZ, size) {
+                // Simple BFS pathfinding to check if door location is reachable
+                const queue = [{ x: fromX, z: fromZ }];
+                const visited = new Set();
+                visited.add(`${fromX},${fromZ}`);
+                
+                const directions = [
+                    { x: 1, z: 0 }, { x: -1, z: 0 },
+                    { x: 0, z: 1 }, { x: 0, z: -1 }
+                ];
+                
+                while (queue.length > 0) {
+                    const current = queue.shift();
+                    
+                    if (current.x === toX && current.z === toZ) {
+                        return true;
+                    }
+                    
+                    for (const dir of directions) {
+                        const next = { 
+                            x: current.x + dir.x, 
+                            z: current.z + dir.z 
+                        };
+                        
+                        if (next.x >= 0 && next.x < size && 
+                            next.z >= 0 && next.z < size &&
+                            !visited.has(`${next.x},${next.z}`) &&
+                            this.map[next.z][next.x] === 0) {
+                            
+                            visited.add(`${next.x},${next.z}`);
+                            queue.push(next);
+                        }
+                    }
+                }
+                
+                return false;
             }
 
             // ===== OBJECT PLACEMENT =====
             placeGameObjects() {
                 const emptyCells = [];
-                for (let y = 1; y < 9; y++) {
-                    for (let x = 1; x < 9; x++) {
+                const mapSize = this.map.length;
+                for (let y = 1; y < mapSize - 1; y++) {
+                    for (let x = 1; x < mapSize - 1; x++) {
                         if (this.map[y][x] === 0 && !(x === 1 && y === 1)) {
                             emptyCells.push({x, y});
                         }
                     }
                 }
+                
+                // Don't spawn mannequins here - they'll be spawned like chairs in build3DWorld
                 
                 // if (emptyCells.length > 0) {
                 //     // Place treasure
@@ -258,6 +542,36 @@
                 this.treasureFound = false;
                 this.spiderKilled = false;
                 this.enemiesKilled = new Set();
+                this.mannequins = [];
+            }
+            
+            // ===== MANNEQUIN SPAWNING =====
+            spawnMannequins(emptyCells) {
+                // Clear existing mannequins
+                this.mannequins = [];
+                
+                console.log('Spawning mannequins, empty cells:', emptyCells.length);
+                
+                if (emptyCells.length === 0) return;
+                
+                // Simply spawn 2-3 mannequins at random locations
+                const numMannequins = Math.floor(Math.random() * 2) + 2; // 2-3 mannequins
+                
+                console.log('Spawning', numMannequins, 'mannequins at random locations');
+                
+                for (let i = 0; i < numMannequins && emptyCells.length > 0; i++) {
+                    // Pick any random empty cell
+                    const randomIndex = Math.floor(Math.random() * emptyCells.length);
+                    const cell = emptyCells[randomIndex];
+                    
+                    console.log('Spawning mannequin', i + 1, 'at:', cell.x, cell.y);
+                    this.createMannequin(cell.x + 0.5, cell.y + 0.5);
+                    
+                    // Remove this cell so we don't spawn multiple mannequins in same spot
+                    emptyCells.splice(randomIndex, 1);
+                }
+                
+                console.log('Total mannequins spawned:', this.mannequins.length);
             }
 
             // ===== 3D WORLD BUILDING =====
@@ -304,13 +618,12 @@
                         // Ceiling
                         const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), ceilingMaterial);
                         ceiling.rotation.x = Math.PI / 2;
-                        ceiling.position.set(x + 0.5, 2, z + 0.5);
+                        ceiling.position.set(x + 0.5, 1.5, z + 0.5);
                         this.sceneObjects.add(ceiling);
                         
-                        // Randomly place hanging cloths in empty spaces
-                        if (cell === 0 && Math.random() < 0.8) {
-                            const randomClothTexture = Math.random() < 0.5 ? clothTexture : cloth2Texture;
-                            this.createHangingCloth(x + 0.5, z + 0.5, randomClothTexture);
+                        // Randomly place hanging cloths in empty spaces (less frequently)
+                        if (cell === 0 && Math.random() < 0.3) {
+                            this.createHangingCloth(x + 0.5, z + 0.5, clothTexture);
                         }
                         
                         // Randomly place rot decals on floor in abundance
@@ -321,8 +634,8 @@
                         
                         // Walls and objects
                         if (cell === 1) {
-                            const wall = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 1), wallMaterial);
-                            wall.position.set(x + 0.5, 1, z + 0.5);
+                            const wall = new THREE.Mesh(new THREE.BoxGeometry(1, 1.5, 1), wallMaterial);
+                            wall.position.set(x + 0.5, 0.75, z + 0.5);
                             wall.castShadow = wall.receiveShadow = true;
                             this.sceneObjects.add(wall);
                         } else if (cell === 2) {
@@ -340,6 +653,8 @@
                             this.createStairsUp(x + 0.5, z + 0.5);
                         } else if (cell === 7) {
                             this.createStairsDown(x + 0.5, z + 0.5);
+                        } else if (cell === 8) {
+                            this.createDoor(x + 0.5, z + 0.5);
                         }
                     }
                 }
@@ -360,6 +675,18 @@
                         const randomIndex = Math.floor(Math.random() * emptyCells.length);
                         const cell = emptyCells[randomIndex];
                         this.createChair(cell.x, cell.z, chairTexture);
+                        emptyCells.splice(randomIndex, 1); // Remove used cell
+                    }
+                }
+                
+                // Spawn mannequins randomly like chairs
+                if (emptyCells.length > 0) {
+                    const numMannequins = Math.floor(Math.random() * 3) + 1; // 1-3 mannequins
+                    for (let i = 0; i < numMannequins && emptyCells.length > 0; i++) {
+                        const randomIndex = Math.floor(Math.random() * emptyCells.length);
+                        const cell = emptyCells[randomIndex];
+                        console.log('Spawning mannequin like chair at:', cell.x, cell.z);
+                        this.createMannequin(cell.x, cell.z);
                         emptyCells.splice(randomIndex, 1); // Remove used cell
                     }
                 }
@@ -393,6 +720,55 @@
                 };
                 
                 this.sceneObjects.add(enemy);
+            }
+            
+            createMannequin(x, z) {
+                console.log('Creating mannequin at position:', x, z);
+                
+                // Create mannequin with texture
+                const mannequinGeometry = new THREE.PlaneGeometry(0.8, 1.2);
+                
+                // Load mannequin texture
+                const textureLoader = new THREE.TextureLoader();
+                const mannequinTexture = textureLoader.load('mannequin.png');
+                mannequinTexture.magFilter = mannequinTexture.minFilter = THREE.NearestFilter;
+                mannequinTexture.transparent = true;
+                
+                const mannequinMaterial = new THREE.MeshLambertMaterial({ 
+                    map: mannequinTexture,
+                    transparent: true,
+                    alphaTest: 0.1,
+                    side: THREE.DoubleSide
+                });
+                mannequinMaterial.depthWrite = false;
+                
+                const mannequin = new THREE.Mesh(mannequinGeometry, mannequinMaterial);
+                mannequin.position.set(x, 0.75, z); // Higher up to be more visible
+                mannequin.userData = { 
+                    type: 'mannequin', 
+                    billboard: true,
+                    worldX: x,
+                    worldZ: z,
+                    targetX: x,
+                    targetZ: z,
+                    moveSpeed: 0.008, // Units per frame for smooth movement
+                    lastMoveTime: 0,
+                    path: [],
+                    pathIndex: 0,
+                    recalculatePathTime: 0,
+                    isMoving: false
+                };
+                
+                this.mannequins.push(mannequin);
+                this.sceneObjects.add(mannequin);
+                
+                console.log('Mannequin created and added to scene. Total mannequins:', this.mannequins.length);
+                console.log('Scene objects count:', this.sceneObjects.children.length);
+                console.log('Mannequin position:', mannequin.position);
+                console.log('Player position:', this.playerPosition);
+                
+                // Force immediate billboard update
+                this.updateMannequinBillboard(mannequin);
             }
 
             createTreasure(x, z) {
@@ -469,6 +845,28 @@
                 stairs.userData = { type: 'stairsDown' };
                 this.sceneObjects.add(stairs);
             }
+            
+            createDoor(x, z) {
+                const textureLoader = new THREE.TextureLoader();
+                const doorTexture = textureLoader.load('door.png');
+                doorTexture.magFilter = doorTexture.minFilter = THREE.NearestFilter;
+                doorTexture.transparent = true;
+                
+                // Create door material
+                const doorMaterial = new THREE.MeshLambertMaterial({ 
+                    map: doorTexture,
+                    transparent: true,
+                    alphaTest: 0.1
+                });
+                
+                // Create door as a box geometry like walls
+                const door = new THREE.Mesh(new THREE.BoxGeometry(1, 1.5, 1), doorMaterial);
+                door.position.set(x, 0.75, z);
+                door.castShadow = true;
+                door.receiveShadow = true;
+                door.userData = { type: 'door' };
+                this.sceneObjects.add(door);
+            }
 
             createHangingCloth(x, z, clothTexture) {
                 const clothMaterial = new THREE.MeshLambertMaterial({ 
@@ -478,8 +876,8 @@
                     side: THREE.DoubleSide
                 });
                 
-                const cloth = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 1.2), clothMaterial);
-                cloth.position.set(x, 1.4, z);
+                const cloth = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 1.0), clothMaterial);
+                cloth.position.set(x, 1.0, z);
                 cloth.rotation.y = Math.random() * Math.PI * 2;
                 cloth.userData = { type: 'cloth' };
                 this.sceneObjects.add(cloth);
@@ -567,27 +965,13 @@
                     billboard: true
                 };
                 this.sceneObjects.add(chair);
-                
-                // Create shadow disc
-                const shadowGeometry = new THREE.CircleGeometry(0.3, 16);
-                const shadowMaterial = new THREE.MeshBasicMaterial({ 
-                    color: 0x000000,
-                    transparent: true,
-                    opacity: 0.3
-                });
-                
-                const shadow = new THREE.Mesh(shadowGeometry, shadowMaterial);
-                shadow.rotation.x = -Math.PI / 2;
-                shadow.position.set(x, 0.002, z + 0.15);
-                shadow.userData = { type: 'chairShadow' };
-                this.sceneObjects.add(shadow);
             }
 
 
 
             // ===== PLAYER CONTROLS =====
             setupControls() {
-                this.moveSpeed = .7;
+                this.moveSpeed = .4;
                 this.turnSpeed = 2.0;
                 this.mouseSensitivity = 0.002;
                 
@@ -710,6 +1094,10 @@
                         this.updateEnemyAI(child);
                         this.updateEnemyBillboard(child);
                         this.updateEnemyVisibility(child);
+                    } else if (child.userData.type === 'mannequin' && child.userData.billboard) {
+                        this.updateMannequinAI(child);
+                        this.updateMannequinBillboard(child);
+                        this.updateMannequinVisibility(child);
                     } else if (child.userData.type === 'chair' && child.userData.billboard) {
                         this.updateChairBillboard(child);
                     }
@@ -795,6 +1183,181 @@
                 const angle = Math.atan2(dx, dz);
                 chair.rotation.set(0, angle, 0);
             }
+            
+            updateMannequinAI(mannequin) {
+                const currentTime = Date.now();
+                
+                // Calculate distance to player
+                const dirX = this.playerPosition.x - mannequin.userData.worldX;
+                const dirZ = this.playerPosition.z - mannequin.userData.worldZ;
+                const distance = Math.sqrt(dirX * dirX + dirZ * dirZ);
+                
+                // Set new target every 2 seconds if player is within range
+                if (distance < 4 && distance > 0.5) {
+                    if (currentTime - mannequin.userData.lastMoveTime > 2000) {
+                        // Calculate new target position slightly towards player
+                        const normalizedX = dirX / distance;
+                        const normalizedZ = dirZ / distance;
+                        
+                        let newTargetX = mannequin.userData.worldX + normalizedX * 0.3;
+                        let newTargetZ = mannequin.userData.worldZ + normalizedZ * 0.3;
+                        
+                        // Handle wrapping
+                        newTargetX = this.wrapCoordinate(newTargetX);
+                        newTargetZ = this.wrapCoordinate(newTargetZ);
+                        
+                        // Check if new target position is valid
+                        if (this.canMoveTo({ x: newTargetX, y: 0.6, z: newTargetZ })) {
+                            mannequin.userData.targetX = newTargetX;
+                            mannequin.userData.targetZ = newTargetZ;
+                            mannequin.userData.isMoving = true;
+                            
+                            console.log('Mannequin setting new target. Distance:', distance.toFixed(2));
+                        }
+                        
+                        mannequin.userData.lastMoveTime = currentTime;
+                    }
+                }
+                
+                // Smooth interpolation towards target position
+                if (mannequin.userData.isMoving) {
+                    const targetDirX = mannequin.userData.targetX - mannequin.userData.worldX;
+                    const targetDirZ = mannequin.userData.targetZ - mannequin.userData.worldZ;
+                    const targetDistance = Math.sqrt(targetDirX * targetDirX + targetDirZ * targetDirZ);
+                    
+                    if (targetDistance > 0.01) {
+                        // Move smoothly towards target
+                        const moveX = (targetDirX / targetDistance) * mannequin.userData.moveSpeed;
+                        const moveZ = (targetDirZ / targetDistance) * mannequin.userData.moveSpeed;
+                        
+                        mannequin.userData.worldX += moveX;
+                        mannequin.userData.worldZ += moveZ;
+                        mannequin.position.x = mannequin.userData.worldX;
+                        mannequin.position.z = mannequin.userData.worldZ;
+                    } else {
+                        // Reached target
+                        mannequin.userData.worldX = mannequin.userData.targetX;
+                        mannequin.userData.worldZ = mannequin.userData.targetZ;
+                        mannequin.position.x = mannequin.userData.worldX;
+                        mannequin.position.z = mannequin.userData.worldZ;
+                        mannequin.userData.isMoving = false;
+                    }
+                }
+            }
+            
+            calculatePathToPlayer(mannequin) {
+                const startX = Math.floor(mannequin.userData.worldX);
+                const startZ = Math.floor(mannequin.userData.worldZ);
+                const targetX = Math.floor(this.playerPosition.x);
+                const targetZ = Math.floor(this.playerPosition.z);
+                
+                mannequin.userData.path = this.findPath(startX, startZ, targetX, targetZ);
+            }
+            
+            findPath(startX, startZ, targetX, targetZ) {
+                // Simple A* pathfinding
+                const openSet = [{ x: startX, z: startZ, g: 0, h: 0, f: 0, parent: null }];
+                const closedSet = new Set();
+                const size = this.map.length;
+                
+                while (openSet.length > 0) {
+                    // Find node with lowest f score
+                    let current = openSet[0];
+                    let currentIndex = 0;
+                    
+                    for (let i = 1; i < openSet.length; i++) {
+                        if (openSet[i].f < current.f) {
+                            current = openSet[i];
+                            currentIndex = i;
+                        }
+                    }
+                    
+                    openSet.splice(currentIndex, 1);
+                    closedSet.add(`${current.x},${current.z}`);
+                    
+                    // Check if we reached the target
+                    if (current.x === targetX && current.z === targetZ) {
+                        // Reconstruct path
+                        const path = [];
+                        let node = current;
+                        while (node) {
+                            path.unshift({ x: node.x, z: node.z });
+                            node = node.parent;
+                        }
+                        return path.slice(1); // Remove starting position
+                    }
+                    
+                    // Check neighbors
+                    const neighbors = [
+                        { x: current.x + 1, z: current.z },
+                        { x: current.x - 1, z: current.z },
+                        { x: current.x, z: current.z + 1 },
+                        { x: current.x, z: current.z - 1 }
+                    ];
+                    
+                    for (const neighbor of neighbors) {
+                        const nx = neighbor.x;
+                        const nz = neighbor.z;
+                        
+                        // Check bounds and walkability
+                        if (nx < 0 || nx >= size || nz < 0 || nz >= size ||
+                            closedSet.has(`${nx},${nz}`) ||
+                            (this.map[nz][nx] !== 0 && this.map[nz][nx] !== 8)) { // Allow doors
+                            continue;
+                        }
+                        
+                        const g = current.g + 1;
+                        const h = Math.abs(nx - targetX) + Math.abs(nz - targetZ);
+                        const f = g + h;
+                        
+                        // Check if this path is better
+                        const existingNode = openSet.find(node => node.x === nx && node.z === nz);
+                        if (!existingNode || g < existingNode.g) {
+                            const newNode = { x: nx, z: nz, g, h, f, parent: current };
+                            if (existingNode) {
+                                const index = openSet.indexOf(existingNode);
+                                openSet[index] = newNode;
+                            } else {
+                                openSet.push(newNode);
+                            }
+                        }
+                    }
+                }
+                
+                return []; // No path found
+            }
+            
+            updateMannequinBillboard(mannequin) {
+                const dx = this.camera.position.x - mannequin.position.x;
+                const dz = this.camera.position.z - mannequin.position.z;
+                const angle = Math.atan2(dx, dz);
+                mannequin.rotation.set(0, angle, 0);
+                mannequin.position.y = 0.6;
+            }
+            
+            updateMannequinVisibility(mannequin) {
+                const distance = Math.sqrt(
+                    Math.pow(mannequin.userData.worldX - this.playerPosition.x, 2) + 
+                    Math.pow(mannequin.userData.worldZ - this.playerPosition.z, 2)
+                );
+                
+                const maxVisibleDistance = this.playerLight.distance;
+                let visibility = 1.0;
+                
+                if (distance > maxVisibleDistance) {
+                    visibility = 0.0;
+                } else {
+                    const distanceFactor = 1.0 - (distance / maxVisibleDistance);
+                    const intensityFactor = Math.min(1.0, this.playerLight.intensity / 20.0);
+                    visibility = distanceFactor * intensityFactor;
+                    visibility = Math.max(0.1, visibility);
+                }
+                
+                if (mannequin.material) {
+                    const brightnessFactor = 0.2 + (visibility * 0.8);
+                    mannequin.material.color.setRGB(brightnessFactor, brightnessFactor, brightnessFactor);
+                }
+            }
 
             updateWaterDroplets() {
                 for (let i = this.waterDroplets.length - 1; i >= 0; i--) {
@@ -879,14 +1442,14 @@
             }
 
             updateLighting() {
-                let minDistance = 2;
+                let minDistance = 1.5;
                 const rayDirections = [];
                 for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 8) {
                     rayDirections.push(new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle)));
                 }
                 
                 for (const rayDir of rayDirections) {
-                    for (let distance = 0.25; distance < 2; distance += 0.2) {
+                    for (let distance = 0.25; distance < 1.5; distance += 0.15) {
                         const checkPos = {
                             x: this.playerPosition.x + rayDir.x * distance,
                             z: this.playerPosition.z + rayDir.z * distance
@@ -904,8 +1467,8 @@
                     }
                 }
                 
-                const maxIntensity = 10;
-                const baseIntensity = 7;
+                const maxIntensity = 20;
+                const baseIntensity = 12;
                 const distanceBoost = Math.max(0, (1 - minDistance) / 1);
                 const finalIntensity = baseIntensity + (maxIntensity - baseIntensity) * distanceBoost;
                 this.playerLight.intensity = Math.max(baseIntensity, finalIntensity);
@@ -921,6 +1484,88 @@
                 } else {
                     this.renderer.render(this.scene, this.camera);
                 }
+                
+                // Draw crosshair on canvas
+                this.drawCrosshair();
+            }
+            
+            drawCrosshair() {
+                // Create crosshair using WebGL overlay
+                if (!this.crosshairScene) {
+                    this.setupCrosshair();
+                }
+                
+                // Render crosshair as overlay
+                this.renderer.autoClear = false;
+                this.renderer.render(this.crosshairScene, this.crosshairCamera);
+                this.renderer.autoClear = true;
+            }
+            
+            setupCrosshair() {
+                // Create orthographic camera for 2D overlay
+                this.crosshairCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+                this.crosshairScene = new THREE.Scene();
+                
+                // Create crosshair geometry
+                const crosshairGeometry = new THREE.BufferGeometry();
+                const vertices = new Float32Array([
+                    // Horizontal line
+                    -0.02, 0, 0,   0.02, 0, 0,
+                    // Vertical line
+                    0, -0.02, 0,   0, 0.02, 0,
+                    // Center dot (small quad)
+                    -0.002, -0.002, 0,   0.002, -0.002, 0,
+                    0.002, 0.002, 0,   -0.002, 0.002, 0
+                ]);
+                
+                const indices = new Uint16Array([
+                    0, 1,  // Horizontal line
+                    2, 3,  // Vertical line
+                    4, 5, 6,  6, 7, 4  // Center dot quad
+                ]);
+                
+                crosshairGeometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+                crosshairGeometry.setIndex(new THREE.BufferAttribute(indices, 1));
+                
+                // Create material
+                const crosshairMaterial = new THREE.LineBasicMaterial({ 
+                    color: 0xffffff, 
+                    transparent: true, 
+                    opacity: 0.8,
+                    depthTest: false,
+                    depthWrite: false
+                });
+                
+                // Create line segments for crosshair
+                const horizontalLine = new THREE.Line(
+                    new THREE.BufferGeometry().setAttribute('position', 
+                        new THREE.BufferAttribute(vertices.slice(0, 6), 3)), 
+                    crosshairMaterial
+                );
+                
+                const verticalLine = new THREE.Line(
+                    new THREE.BufferGeometry().setAttribute('position', 
+                        new THREE.BufferAttribute(vertices.slice(6, 12), 3)), 
+                    crosshairMaterial
+                );
+                
+                // Create center dot
+                const dotMaterial = new THREE.MeshBasicMaterial({ 
+                    color: 0xffffff, 
+                    transparent: true, 
+                    opacity: 0.6,
+                    depthTest: false,
+                    depthWrite: false
+                });
+                
+                const centerDot = new THREE.Mesh(
+                    new THREE.CircleGeometry(0.003, 8), 
+                    dotMaterial
+                );
+                
+                this.crosshairScene.add(horizontalLine);
+                this.crosshairScene.add(verticalLine);
+                this.crosshairScene.add(centerDot);
             }
 
             // ===== UTILITY FUNCTIONS =====
@@ -928,8 +1573,8 @@
                 const wrappedX = this.wrapCoordinate(position.x);
                 const wrappedZ = this.wrapCoordinate(position.z);
                 
-                // Add collision buffer around player (0.3 units)
-                const buffer = 0.3;
+                // Add collision buffer around player (0.25 units - reduced from 0.3)
+                const buffer = 0.25;
                 const checkPositions = [
                     {x: wrappedX - buffer, z: wrappedZ - buffer}, // bottom-left
                     {x: wrappedX + buffer, z: wrappedZ - buffer}, // bottom-right
@@ -942,12 +1587,16 @@
                     const gridX = Math.floor(checkPos.x);
                     const gridZ = Math.floor(checkPos.z);
                     
-                    if (gridZ >= 0 && gridZ < this.map.length && gridX >= 0 && gridX < this.map[0].length) {
-                        if (this.map[gridZ][gridX] === 1) {
-                            return false; // Wall collision detected
-                        }
-                    } else {
+                    // Ensure we're within map bounds
+                    if (gridZ < 0 || gridZ >= this.map.length || gridX < 0 || gridX >= this.map[0].length) {
                         return false; // Out of bounds
+                    }
+                    
+                    const cell = this.map[gridZ][gridX];
+                    // Only block on walls (1), allow doors (8) and empty spaces (0)
+                    if (cell === 1) {
+                        console.log('Wall collision at grid:', gridX, gridZ, 'player pos:', position.x, position.z);
+                        return false; // Wall collision detected
                     }
                 }
                 
@@ -955,8 +1604,12 @@
             }
 
             wrapCoordinate(coord) {
-                if (coord < 0.2) return 9.8 - (0.2 - coord);
-                if (coord > 9.8) return 0.2 + (coord - 9.8);
+                const mapSize = this.map.length;
+                const minBound = 0.2;
+                const maxBound = mapSize - 0.2;
+                
+                if (coord < minBound) return maxBound - (minBound - coord);
+                if (coord > maxBound) return minBound + (coord - maxBound);
                 return coord;
             }
 
@@ -1014,7 +1667,6 @@
                 
                 if (gridZ >= 0 && gridZ < this.map.length && gridX >= 0 && gridX < this.map[0].length) {
                     const cell = this.map[gridZ][gridX];
-                    // console.log(">>> CELL", cell)
                     
                     if (cell === 2 && !this.treasureFound) {
                         this.treasureFound = true;
@@ -1036,8 +1688,53 @@
                         if (this.currentFloorIndex > 0 && !this.isTransitioning) {
                             this.changeFloor(this.currentFloorIndex + 1);
                         }
+                    } else if (cell === 8 && !this.isTransitioning) {
+                        // Door - advance to next level
+                        this.proceedToNextLevel();
                     }
                 }
+            }
+            
+            proceedToNextLevel() {
+                if (this.isTransitioning) return;
+                
+                this.isTransitioning = true;
+                
+                // Fade to black
+                this.fadeOverlay.style.opacity = '1';
+                
+                setTimeout(() => {
+                    // Dump current level and generate new one
+                    console.log('Dumping level:', this.currentLevel);
+                    console.log('Previous map:', JSON.stringify(this.map));
+                    
+                    // Clear current level
+                    this.sceneObjects.clear();
+                    this.waterDroplets = [];
+                    this.dustParticles = [];
+                    this.mannequins = [];
+                    
+                    // Advance to next level
+                    this.currentLevel++;
+                    
+                    // Reset player position
+                    this.playerPosition = { x: 1.5, y: 0.8, z: 1.5 };
+                    
+                    // Generate new level
+                    this.generateLevel();
+                    this.build3DWorld();
+                    
+                    console.log('Generated new level:', this.currentLevel);
+                    
+                    // Fade back in
+                    setTimeout(() => {
+                        this.fadeOverlay.style.opacity = '0';
+                        
+                        setTimeout(() => {
+                            this.isTransitioning = false;
+                        }, 500);
+                    }, 100);
+                }, 500);
             }
 
             toggleFullscreen() {
