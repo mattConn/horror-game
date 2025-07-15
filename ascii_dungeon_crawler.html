@@ -59,6 +59,12 @@
                 this.fadeOverlay = document.getElementById('fadeOverlay');
                 this.isTransitioning = false;
                 
+                // ===== VIEW BOBBING =====
+                this.bobbingOffset = 0;
+                this.isMoving = false;
+                this.bobbingSpeed = 8;
+                this.bobbingAmount = 0.02;
+                
                 // ===== WATER DROPLETS =====
                 this.waterDroplets = [];
                 this.lastDropletTime = 0;
@@ -679,14 +685,34 @@
                     }
                 }
                 
-                // Spawn mannequins randomly like chairs
+                // Spawn mannequins randomly like chairs (more frequently)
                 if (emptyCells.length > 0) {
-                    const numMannequins = Math.floor(Math.random() * 3) + 1; // 1-3 mannequins
+                    const numMannequins = Math.floor(Math.random() * 4) + 2; // 2-5 mannequins
                     for (let i = 0; i < numMannequins && emptyCells.length > 0; i++) {
                         const randomIndex = Math.floor(Math.random() * emptyCells.length);
                         const cell = emptyCells[randomIndex];
                         console.log('Spawning mannequin like chair at:', cell.x, cell.z);
                         this.createMannequin(cell.x, cell.z);
+                        emptyCells.splice(randomIndex, 1); // Remove used cell
+                    }
+                }
+                
+                // Spawn enemies based on level progression
+                if (this.currentLevel > 2 && emptyCells.length > 0) {
+                    let numEnemies;
+                    if (this.currentLevel >= 3 && this.currentLevel <= 10) {
+                        numEnemies = 1; // Levels 3-10: exactly 1 enemy
+                    } else if (this.currentLevel >= 11) {
+                        numEnemies = 2; // Level 11+: exactly 2 enemies
+                    }
+                    
+                    console.log(`Level ${this.currentLevel}: Spawning ${numEnemies} pursuing enemies`);
+                    
+                    for (let i = 0; i < numEnemies && emptyCells.length > 0; i++) {
+                        const randomIndex = Math.floor(Math.random() * emptyCells.length);
+                        const cell = emptyCells[randomIndex];
+                        console.log('Spawning pursuing enemy', i + 1, 'at:', cell.x, cell.z);
+                        this.createPursuingEnemy(cell.x, cell.z);
                         emptyCells.splice(randomIndex, 1); // Remove used cell
                     }
                 }
@@ -720,6 +746,51 @@
                 };
                 
                 this.sceneObjects.add(enemy);
+            }
+            
+            createPursuingEnemy(x, z) {
+                const textureLoader = new THREE.TextureLoader();
+                const enemyTexture = textureLoader.load('enemy_sprite.png');
+                enemyTexture.magFilter = enemyTexture.minFilter = THREE.NearestFilter;
+                enemyTexture.transparent = true;
+                enemyTexture.wrapS = THREE.RepeatWrapping;
+                enemyTexture.wrapT = THREE.RepeatWrapping;
+                
+                // Set up sprite sheet animation (5 frames horizontally)
+                enemyTexture.repeat.set(1/5, 1); // Show 1/5th of the texture width
+                enemyTexture.offset.set(0, 0); // Start at first frame
+                
+                const enemyGeometry = new THREE.PlaneGeometry(0.6, 1.2);
+                const enemyMaterial = new THREE.MeshLambertMaterial({ 
+                    map: enemyTexture,
+                    transparent: true,
+                    alphaTest: 0.1,
+                    side: THREE.DoubleSide
+                });
+                enemyMaterial.depthWrite = false;
+                
+                const enemy = new THREE.Mesh(enemyGeometry, enemyMaterial);
+                enemy.position.set(x, 0.9, z);
+                enemy.userData = { 
+                    type: 'pursuingEnemy', 
+                    billboard: true,
+                    worldX: x,
+                    worldZ: z,
+                    moveSpeed: 0.004, // Smooth per-frame movement, slower than player
+                    lastMoveTime: 0,
+                    targetX: x,
+                    targetZ: z,
+                    isMoving: true, // Start seeking immediately
+                    seekingFromStart: true,
+                    // Animation properties
+                    animationFrame: 0,
+                    animationSpeed: 0.02, // Slow framerate for 2-frame animation
+                    animationTimer: 0,
+                    totalFrames: 5
+                };
+                
+                this.sceneObjects.add(enemy);
+                console.log('Pursuing enemy created at:', x, z);
             }
             
             createMannequin(x, z) {
@@ -1033,6 +1104,7 @@
                 this.spawnDustParticles();
                 this.updateCamera();
                 this.updateLighting();
+                // this.updateViewBobbing(); // Disabled for now
                 this.render();
             }
 
@@ -1094,6 +1166,10 @@
                         this.updateEnemyAI(child);
                         this.updateEnemyBillboard(child);
                         this.updateEnemyVisibility(child);
+                    } else if (child.userData.type === 'pursuingEnemy' && child.userData.billboard) {
+                        this.updatePursuingEnemyAI(child);
+                        this.updateEnemyBillboard(child);
+                        this.updateEnemyVisibility(child);
                     } else if (child.userData.type === 'mannequin' && child.userData.billboard) {
                         this.updateMannequinAI(child);
                         this.updateMannequinBillboard(child);
@@ -1143,6 +1219,69 @@
                     enemy.userData.lastMoveTime = currentTime;
                 }
             }
+            
+            updatePursuingEnemyAI(enemy) {
+                // Update animation
+                enemy.userData.animationTimer += enemy.userData.animationSpeed;
+                if (enemy.userData.animationTimer >= 1.0) {
+                    enemy.userData.animationTimer = 0;
+                    enemy.userData.animationFrame = (enemy.userData.animationFrame + 1) % enemy.userData.totalFrames;
+                    
+                    // Update texture offset to show current frame
+                    const frameOffsetX = enemy.userData.animationFrame / enemy.userData.totalFrames;
+                    enemy.material.map.offset.setX(frameOffsetX);
+                }
+                
+                // Calculate distance and direction to player
+                const dirX = this.playerPosition.x - enemy.userData.worldX;
+                const dirZ = this.playerPosition.z - enemy.userData.worldZ;
+                const distance = Math.sqrt(dirX * dirX + dirZ * dirZ);
+                
+                // Always pursue the player with smooth movement every frame
+                if (distance > 0.1) { // Don't move if extremely close
+                    // Calculate direct path to player
+                    const normalizedX = dirX / distance;
+                    const normalizedZ = dirZ / distance;
+                    
+                    // Move towards player smoothly
+                    let newX = enemy.userData.worldX + normalizedX * enemy.userData.moveSpeed;
+                    let newZ = enemy.userData.worldZ + normalizedZ * enemy.userData.moveSpeed;
+                    
+                    // Handle wrapping
+                    newX = this.wrapCoordinate(newX);
+                    newZ = this.wrapCoordinate(newZ);
+                    
+                    // Check if new position is valid
+                    if (this.canMoveTo({ x: newX, y: 0.5, z: newZ })) {
+                        enemy.userData.worldX = newX;
+                        enemy.userData.worldZ = newZ;
+                        enemy.position.x = newX;
+                        enemy.position.z = newZ;
+                    } else {
+                        // If direct path is blocked, try perpendicular movements
+                        const perpendicular = [
+                            { x: -normalizedZ, z: normalizedX }, // Left perpendicular
+                            { x: normalizedZ, z: -normalizedX }, // Right perpendicular
+                        ];
+                        
+                        for (const perp of perpendicular) {
+                            let altNewX = enemy.userData.worldX + perp.x * enemy.userData.moveSpeed;
+                            let altNewZ = enemy.userData.worldZ + perp.z * enemy.userData.moveSpeed;
+                            
+                            altNewX = this.wrapCoordinate(altNewX);
+                            altNewZ = this.wrapCoordinate(altNewZ);
+                            
+                            if (this.canMoveTo({ x: altNewX, y: 0.5, z: altNewZ })) {
+                                enemy.userData.worldX = altNewX;
+                                enemy.userData.worldZ = altNewZ;
+                                enemy.position.x = altNewX;
+                                enemy.position.z = altNewZ;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
 
             updateEnemyBillboard(enemy) {
                 // Classic raycasting-style billboard
@@ -1172,7 +1311,7 @@
                 }
                 
                 if (enemy.material) {
-                    const brightnessFactor = 0.1 + (visibility * 0.9);
+                    const brightnessFactor = 0.05 + (visibility * 0.4);
                     enemy.material.color.setRGB(brightnessFactor, brightnessFactor, brightnessFactor);
                 }
             }
@@ -1185,64 +1324,8 @@
             }
             
             updateMannequinAI(mannequin) {
-                const currentTime = Date.now();
-                
-                // Calculate distance to player
-                const dirX = this.playerPosition.x - mannequin.userData.worldX;
-                const dirZ = this.playerPosition.z - mannequin.userData.worldZ;
-                const distance = Math.sqrt(dirX * dirX + dirZ * dirZ);
-                
-                // Set new target every 2 seconds if player is within range
-                if (distance < 4 && distance > 0.5) {
-                    if (currentTime - mannequin.userData.lastMoveTime > 2000) {
-                        // Calculate new target position slightly towards player
-                        const normalizedX = dirX / distance;
-                        const normalizedZ = dirZ / distance;
-                        
-                        let newTargetX = mannequin.userData.worldX + normalizedX * 0.3;
-                        let newTargetZ = mannequin.userData.worldZ + normalizedZ * 0.3;
-                        
-                        // Handle wrapping
-                        newTargetX = this.wrapCoordinate(newTargetX);
-                        newTargetZ = this.wrapCoordinate(newTargetZ);
-                        
-                        // Check if new target position is valid
-                        if (this.canMoveTo({ x: newTargetX, y: 0.6, z: newTargetZ })) {
-                            mannequin.userData.targetX = newTargetX;
-                            mannequin.userData.targetZ = newTargetZ;
-                            mannequin.userData.isMoving = true;
-                            
-                            console.log('Mannequin setting new target. Distance:', distance.toFixed(2));
-                        }
-                        
-                        mannequin.userData.lastMoveTime = currentTime;
-                    }
-                }
-                
-                // Smooth interpolation towards target position
-                if (mannequin.userData.isMoving) {
-                    const targetDirX = mannequin.userData.targetX - mannequin.userData.worldX;
-                    const targetDirZ = mannequin.userData.targetZ - mannequin.userData.worldZ;
-                    const targetDistance = Math.sqrt(targetDirX * targetDirX + targetDirZ * targetDirZ);
-                    
-                    if (targetDistance > 0.01) {
-                        // Move smoothly towards target
-                        const moveX = (targetDirX / targetDistance) * mannequin.userData.moveSpeed;
-                        const moveZ = (targetDirZ / targetDistance) * mannequin.userData.moveSpeed;
-                        
-                        mannequin.userData.worldX += moveX;
-                        mannequin.userData.worldZ += moveZ;
-                        mannequin.position.x = mannequin.userData.worldX;
-                        mannequin.position.z = mannequin.userData.worldZ;
-                    } else {
-                        // Reached target
-                        mannequin.userData.worldX = mannequin.userData.targetX;
-                        mannequin.userData.worldZ = mannequin.userData.targetZ;
-                        mannequin.position.x = mannequin.userData.worldX;
-                        mannequin.position.z = mannequin.userData.worldZ;
-                        mannequin.userData.isMoving = false;
-                    }
-                }
+                // Mannequins are now stationary - they don't move
+                // Just keep them as creepy static figures in the dungeon
             }
             
             calculatePathToPlayer(mannequin) {
@@ -1432,7 +1515,14 @@
             }
 
             updateCamera() {
-                this.camera.position.set(this.playerPosition.x, this.playerPosition.y, this.playerPosition.z);
+                // Calculate bobbing effect (disabled)
+                // const bobbingY = Math.sin(this.bobbingOffset) * this.bobbingAmount;
+                
+                this.camera.position.set(
+                    this.playerPosition.x, 
+                    this.playerPosition.y, 
+                    this.playerPosition.z
+                );
                 this.camera.rotation.order = 'YXZ';
                 this.camera.rotation.y = this.playerRotation.y;
                 this.camera.rotation.x = this.playerRotation.x;
@@ -1472,6 +1562,20 @@
                 const distanceBoost = Math.max(0, (1 - minDistance) / 1);
                 const finalIntensity = baseIntensity + (maxIntensity - baseIntensity) * distanceBoost;
                 this.playerLight.intensity = Math.max(baseIntensity, finalIntensity);
+            }
+            
+            updateViewBobbing() {
+                // Check if player is moving
+                this.isMoving = this.keys['w'] || this.keys['a'] || this.keys['s'] || this.keys['d'] ||
+                               this.keys['ArrowUp'] || this.keys['ArrowLeft'] || this.keys['ArrowDown'] || this.keys['ArrowRight'];
+                
+                if (this.isMoving) {
+                    // Increment bobbing offset for smooth sine wave motion
+                    this.bobbingOffset += this.bobbingSpeed * 0.016; // 60fps delta time
+                } else {
+                    // Gradually reduce bobbing when not moving
+                    this.bobbingOffset *= 0.9;
+                }
             }
 
             render() {
